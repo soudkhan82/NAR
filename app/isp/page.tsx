@@ -1,9 +1,6 @@
 // app/isp/page.tsx
 "use client";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
@@ -218,12 +215,10 @@ export default function IspTimeseriesPage() {
       setTs(seriesRes);
       setSum(summaryRes);
 
-      // Only set default selection on first successful load
       if (firstLoadRef.current) {
         setSelected(seriesRes.numericKeys);
         firstLoadRef.current = false;
       } else {
-        // Keep user selection but drop keys that no longer exist
         setSelected((prev) =>
           prev.filter((k) => seriesRes.numericKeys.includes(k))
         );
@@ -239,7 +234,7 @@ export default function IspTimeseriesPage() {
     }
   };
 
-  // Set a sensible default (last 30 days) on first mount, then fetch with those exact values
+  // Set last 30 days on mount, then fetch with those exact values
   useEffect(() => {
     setDateFrom(last30From);
     setDateTo(todayYmd);

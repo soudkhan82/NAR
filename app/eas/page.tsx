@@ -1,9 +1,6 @@
 // app/eas/page.tsx
 "use client";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -138,9 +135,11 @@ export default function EASPage() {
   }, []);
 
   // Make load accept overrides so "Last 30 days" fetches with the fresh values immediately.
-  const load = async (
-    opts?: { from?: string; to?: string; subregion?: string | null }
-  ) => {
+  const load = async (opts?: {
+    from?: string;
+    to?: string;
+    subregion?: string | null;
+  }) => {
     const effectiveFrom = opts?.from ?? from;
     const effectiveTo = opts?.to ?? to;
     const effectiveSub = opts?.subregion ?? subregion ?? undefined;
@@ -252,13 +251,10 @@ export default function EASPage() {
               onClick={() => {
                 const nextFrom = iso(thirtyDaysAgo);
                 const nextTo = iso(today);
-                const nextSub =
-                  subregions.length === 1 ? subregions[0] : null;
-                // update UI state
+                const nextSub = subregions.length === 1 ? subregions[0] : null;
                 setFrom(nextFrom);
                 setTo(nextTo);
                 setSubregion(nextSub);
-                // fetch immediately with the intended values (no stale closure)
                 void load({ from: nextFrom, to: nextTo, subregion: nextSub });
               }}
             >

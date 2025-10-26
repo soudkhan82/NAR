@@ -1,52 +1,116 @@
 // app/ANOps/page.tsx
 "use client";
 
-// Client-only page: no prerender cache traps
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
-import { useEffect, useMemo, useState } from "react";
-import type {
-  SiteRow,
-  SiteDetailRow,
-  TimeseriesRow,
-  AttemptStatusRow,
-  SiteClass,
-} from "@/app/lib/rpc/anops";
-
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ResponsiveContainer,
   LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   Legend,
   BarChart,
   Bar,
 } from "recharts";
 
-/** -------- lazy load RPCs on the client only -------- */
-let _rpc: typeof import("@/app/lib/rpc/anops") | null = null;
-async function getRpc() {
-  if (_rpc) return _rpc;
-  _rpc = await import("@/app/lib/rpc/anops");
-  return _rpc!;
-}
+/* ---------------- Types (mirror your RPC shapes) ---------------- */
+type SiteClass = "PGS" | "SB";
 
-interface FilterState {
+type SiteRow = { SubRegion: string | null };
+type SiteDetailRow = {
+  SiteName: string;
+  ProjectName: string | null;
+  Status: string | null;
+  Attempt_date: string | null;
+  v2g: number | null;
+  v3g: number | null;
+  v4g: number | null;
+};
+type TimeseriesRow = {
+  dt: string;
+  v2g?: number | null;
+  v3g?: number | null;
+  v4g?: number | null;
+};
+type AttemptStatusRow = {
+  dt: string;
+  attempted?: number | null;
+  resolved?: number | null;
+};
+
+type FilterState = {
   projects: string[];
   siteClass: SiteClass;
   subregion: string | null;
   district: string | null;
   grid: string | null;
-  dateFrom: string | null; // yyyy-mm-dd
-  dateTo: string | null; // yyyy-mm-dd
-  site: string | null; // selected site (row click)
-  search: string | null; // quick filter in site list
+  dateFrom: string | null;
+  dateTo: string | null;
+  site: string | null;
+  search: string | null;
+};
+
+/* --------------- Dynamic RPC loader (client-only) --------------- */
+type RpcModule = {
+  fetchProjectNames: () => Promise<string[]>;
+  fetchFilterOptions: (
+    projects: string[] | null,
+    siteClass: SiteClass
+  ) => Promise<{ subregions: string[]; districts: string[]; grids: string[] }>;
+  fetchSites: (args: {
+    projects: string[];
+    siteClass: SiteClass;
+    subregion: string | null;
+    district: string | null;
+    grid: string | null;
+    search: string | null;
+  }) => Promise<SiteRow[]>;
+  fetchSitesDetail: (args: {
+    projects: string[];
+    siteClass: SiteClass;
+    subregion: string | null;
+    district: string | null;
+    grid: string | null;
+    dateFrom: string | null;
+    dateTo: string | null;
+    search: string | null;
+  }) => Promise<SiteDetailRow[]>;
+  fetchTimeseries: (args: {
+    dateFrom: string | null;
+    dateTo: string | null;
+    projects: string[];
+    site: string | null;
+    siteClass: SiteClass;
+    subregion: string | null;
+    district: string | null;
+    grid: string | null;
+  }) => Promise<TimeseriesRow[]>;
+  fetchAttemptStatus: (args: {
+    dateFrom: string | null;
+    dateTo: string | null;
+    projects: string[];
+    siteClass: SiteClass;
+    subregion: string | null;
+    district: string | null;
+    grid: string | null;
+  }) => Promise<AttemptStatusRow[]>;
+};
+
+async function loadRpc(): Promise<RpcModule> {
+  const mod = await import("@/app/lib/rpc/anops");
+  return {
+    fetchProjectNames: mod.fetchProjectNames,
+    fetchFilterOptions: mod.fetchFilterOptions,
+    fetchSites: mod.fetchSites,
+    fetchSitesDetail: mod.fetchSitesDetail,
+    fetchTimeseries: mod.fetchTimeseries,
+    fetchAttemptStatus: mod.fetchAttemptStatus,
+  };
 }
 
+/* ---------------- Helpers ---------------- */
 const DEFAULT_SUBREGION = "South-1";
 
 const emptyFilters: FilterState = {
@@ -80,7 +144,12 @@ const heat = (
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
 };
 
-export default function ANOpsPage() {
+const Spinner = () => (
+  <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+);
+
+/* ---------------- Page ---------------- */
+export default function Page() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [projects, setProjects] = useState<string[]>([]);
@@ -89,13 +158,20 @@ export default function ANOpsPage() {
     subregions: string[];
     districts: string[];
     grids: string[];
-  }>({ subregions: [], districts: [], grids: [] });
+  }>({
+    subregions: [],
+    districts: [],
+    grids: [],
+  });
   const [rows, setRows] = useState<SiteDetailRow[]>([]);
   const [ts, setTs] = useState<TimeseriesRow[]>([]);
   const [attempts, setAttempts] = useState<AttemptStatusRow[]>([]);
   const [sitesPool, setSitesPool] = useState<SiteRow[]>([]);
 
-  // default last 180 days — client-only
+  const rpcRef = useRef<RpcModule | null>(null);
+  const getRpc = async () => (rpcRef.current ??= await loadRpc());
+
+  // default last 180 days (client-only)
   useEffect(() => {
     setFilters((f) => {
       if (f.dateFrom || f.dateTo) return f;
@@ -113,8 +189,7 @@ export default function ANOpsPage() {
   useEffect(() => {
     (async () => {
       const rpc = await getRpc();
-      const names = await rpc.fetchProjectNames();
-      setProjects(names);
+      setProjects(await rpc.fetchProjectNames());
     })();
   }, []);
 
@@ -139,7 +214,7 @@ export default function ANOpsPage() {
     })();
   }, [filters.projects, filters.siteClass]);
 
-  // Sites pool (for subregion counts) – ignore subregion to compare regions
+  // Sites pool (ignores subregion to compare regions)
   useEffect(() => {
     (async () => {
       if (!filters.projects.length) {
@@ -151,9 +226,9 @@ export default function ANOpsPage() {
         projects: filters.projects,
         siteClass: filters.siteClass,
         subregion: null,
-        district: filters.district ?? null,
-        grid: filters.grid ?? null,
-        search: filters.search ?? null,
+        district: filters.district,
+        grid: filters.grid,
+        search: filters.search,
       });
       setSitesPool(list);
     })();
@@ -170,7 +245,7 @@ export default function ANOpsPage() {
     (async () => {
       setLoading(true);
       try {
-        if (filters.projects.length === 0) {
+        if (!filters.projects.length) {
           setRows([]);
           setTs([]);
           setAttempts([]);
@@ -217,34 +292,7 @@ export default function ANOpsPage() {
     })();
   }, [filters]);
 
-  // Handlers
-  const onToggleProject = (name: string) => {
-    setBusy(true);
-    setFilters((f) => {
-      const has = f.projects.includes(name);
-      return {
-        ...f,
-        projects: has
-          ? f.projects.filter((p) => p !== name)
-          : [...f.projects, name],
-        site: null,
-      };
-    });
-    setTimeout(() => setBusy(false), 150);
-  };
-  const onClearProjects = () => {
-    setBusy(true);
-    setFilters((f) => ({ ...f, projects: [], site: null }));
-    setTimeout(() => setBusy(false), 150);
-  };
-  const onPick = (
-    key: keyof Pick<FilterState, "subregion" | "district" | "grid">,
-    val: string | null
-  ) => {
-    setFilters((f) => ({ ...f, [key]: val, site: null }));
-  };
-
-  // KPIs
+  /* ---------------- Derived ---------------- */
   const { avg2g, avg3g, avg4g } = useMemo(() => {
     const v2 = ts
       .map((r) => (typeof r.v2g === "number" ? r.v2g : null))
@@ -281,10 +329,36 @@ export default function ANOpsPage() {
     }));
   }, [sitesPool]);
 
-  const Spinner = () => (
-    <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-  );
+  /* ---------------- Handlers ---------------- */
+  const onToggleProject = (name: string) => {
+    setBusy(true);
+    setFilters((f) => {
+      const has = f.projects.includes(name);
+      return {
+        ...f,
+        projects: has
+          ? f.projects.filter((p) => p !== name)
+          : [...f.projects, name],
+        site: null,
+      };
+    });
+    setTimeout(() => setBusy(false), 150);
+  };
 
+  const onClearProjects = () => {
+    setBusy(true);
+    setFilters((f) => ({ ...f, projects: [], site: null }));
+    setTimeout(() => setBusy(false), 150);
+  };
+
+  const onPick = (
+    key: keyof Pick<FilterState, "subregion" | "district" | "grid">,
+    val: string | null
+  ) => {
+    setFilters((f) => ({ ...f, [key]: val, site: null }));
+  };
+
+  /* ---------------- UI ---------------- */
   return (
     <div className="p-4 space-y-5 bg-gradient-to-b from-white to-slate-50">
       <header className="flex items-center justify-between">
@@ -316,7 +390,6 @@ export default function ANOpsPage() {
           </button>
         </div>
 
-        {/* SiteClassification */}
         <div className="mb-3 flex items-center gap-2">
           <span className="text-xs text-slate-600">SiteClassification:</span>
           <div className="inline-flex rounded-lg border bg-white shadow-sm overflow-hidden">
