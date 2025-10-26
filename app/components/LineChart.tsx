@@ -10,23 +10,30 @@ import {
   CartesianGrid,
 } from "recharts";
 
-export default function LineChart({
+type RowLike = Record<string, string | number>;
+type KeyOf<T> = Extract<keyof T, string>;
+
+type Props<T extends RowLike> = {
+  title: string;
+  data: T[];
+  xKey: KeyOf<T>;
+  yKey: KeyOf<T>; // numeric key
+  height?: number;
+};
+
+export default function LineChart<T extends RowLike>({
   title,
   data,
   xKey,
   yKey,
-}: {
-  title: string;
-  data: Array<Record<string, any>>;
-  xKey: string;
-  yKey: string; // "pgs" or "sb"
-}) {
+  height = 260,
+}: Props<T>) {
   return (
     <div className="p-4 rounded-2xl border shadow-sm bg-white">
       <div className="text-sm font-medium mb-2">{title}</div>
-      <div style={{ width: "100%", height: 260 }}>
+      <div style={{ width: "100%", height }}>
         <ResponsiveContainer>
-          <RCLineChart data={data}>
+          <RCLineChart data={data as RowLike[]}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey={xKey} tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} />
