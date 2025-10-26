@@ -1,16 +1,10 @@
 // app/availability/page.tsx
 "use client";
+export const dynamic = "force-dynamic";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  fetchCellAvailBundle,
-  fetchSubregions,
-  fetchGrids,
-  fetchDistricts,
-  fetchSiteNames,
-  type BundleFilters,
-  type BundleResult,
-} from "@/app/lib/rpc/avail";
+import type { BundleFilters, BundleResult } from "@/app/lib/rpc/avail"; // type-only import = safe; no runtime load
+
 import { Cards } from "@/app/components/Cards";
 import AreaChart from "@/app/components/AreaChart";
 import BarChart from "@/app/components/BarChart";
@@ -24,6 +18,14 @@ import ComboBox from "@/app/components/ComboBox";
    - Skeletons while loading, clean error banner
    - 4 charts grid + District chart
    ========================================================= */
+
+/** ---- lazy-load RPCs only in the browser ---- */
+let _rpc: typeof import("@/app/lib/rpc/avail") | null = null;
+async function getRpc() {
+  if (_rpc) return _rpc;
+  _rpc = await import("@/app/lib/rpc/avail");
+  return _rpc!;
+}
 
 export default function AvailabilityPage() {
   /* ---------- defaults ---------- */
@@ -75,14 +77,15 @@ export default function AvailabilityPage() {
     [subregion, grid, district, sitename, dateFrom, dateTo]
   );
 
-  // Auto-fetch on any change
+  // Auto-fetch on any change — uses dynamic import (client-only)
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
       setErr(null);
       try {
-        const data = await fetchCellAvailBundle(filters);
+        const rpc = await getRpc();
+        const data = await rpc.fetchCellAvailBundle(filters);
         if (alive) setBundle(data);
       } catch (e: any) {
         if (alive) setErr(e?.message ?? "Failed to load");
@@ -95,18 +98,28 @@ export default function AvailabilityPage() {
     };
   }, [filters]);
 
-  // Dropdown providers (scoped by SubRegion)
-  const getSubregions = async (_: string) => fetchSubregions();
-  const getGrids = async (_: string) => fetchGrids(blankToNull(subregion));
-  const getDistricts = async (_: string) =>
-    fetchDistricts(blankToNull(subregion), blankToNull(grid));
-  const getSiteNamesCb = async (term: string) =>
-    fetchSiteNames(
+  // Dropdown providers (scoped by SubRegion) — also via dynamic import
+  const getSubregions = async (_: string) => {
+    const rpc = await getRpc();
+    return rpc.fetchSubregions();
+  };
+  const getGrids = async (_: string) => {
+    const rpc = await getRpc();
+    return rpc.fetchGrids(blankToNull(subregion));
+  };
+  const getDistricts = async (_: string) => {
+    const rpc = await getRpc();
+    return rpc.fetchDistricts(blankToNull(subregion), blankToNull(grid));
+  };
+  const getSiteNamesCb = async (term: string) => {
+    const rpc = await getRpc();
+    return rpc.fetchSiteNames(
       term,
       blankToNull(subregion),
       blankToNull(grid),
       blankToNull(district)
     );
+  };
 
   // Reset to defaults
   const resetFilters = () => {
@@ -236,7 +249,6 @@ export default function AvailabilityPage() {
                 yKey="sb"
                 series="SB"
               />
-
               <BarChart
                 title="Weekly — SB"
                 data={bundle!.weekly}
