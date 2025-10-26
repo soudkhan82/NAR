@@ -110,6 +110,3 @@ export async function fetchSiteNames(
   if (error) throw error;
   return (data ?? []).map((r: { sitename: string }) => r.sitename);
 }
-
-
-
