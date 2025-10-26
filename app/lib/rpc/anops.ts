@@ -1,4 +1,5 @@
-import supabase from "@/config/supabase-config";
+import supabase from "@/app/config/supabase-config";
+
 
 export type ProjectName = string;
 export type SiteClass = "PGS" | "SB";                 // NEW
