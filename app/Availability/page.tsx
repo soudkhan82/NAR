@@ -261,7 +261,10 @@ export default function AvailabilityPage() {
             <div className="grid gap-4">
               <HorizontalBarChart
                 title="Avg Overall by District"
-                data={bundle.by_district}
+                data={bundle.by_district.map((r) => ({
+                  ...r,
+                  value: r.value ?? 0,
+                }))}
                 color="#8b5cf6"
                 maxItems={15}
               />
