@@ -10,14 +10,14 @@ import {
   CartesianGrid,
 } from "recharts";
 
-type RowLike = Record<string, string | number>;
+type RowLike = Record<string, string | number | null>;
 type KeyOf<T> = Extract<keyof T, string>;
 
 type Props<T extends RowLike> = {
   title: string;
   data: T[];
   xKey: KeyOf<T>;
-  yKey: KeyOf<T>; // numeric key
+  yKey: KeyOf<T>;
   height?: number;
 };
 

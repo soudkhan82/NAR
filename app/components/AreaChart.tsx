@@ -10,20 +10,20 @@ import {
   CartesianGrid,
 } from "recharts";
 
-/** Row type accepted by charts: string/number values only */
-type RowLike = Record<string, string | number>;
+// allow nulls alongside numbers/strings
+type RowLike = Record<string, string | number | null>;
 type KeyOf<T> = Extract<keyof T, string>;
 
 const COLORS: Record<"PGS" | "SB", string> = {
-  PGS: "#2563eb", // blue
-  SB: "#10b981", // green
+  PGS: "#2563eb",
+  SB: "#10b981",
 };
 
 type Props<T extends RowLike> = {
   title: string;
   data: T[];
   xKey: KeyOf<T>;
-  yKey: KeyOf<T>; // numeric key
+  yKey: KeyOf<T>;
   series: "PGS" | "SB";
   height?: number;
 };
