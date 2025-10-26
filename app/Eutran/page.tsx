@@ -1,9 +1,6 @@
 // app/Eutran/page.tsx
 "use client";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,7 +35,7 @@ type HourPoint = {
 type GridDaily = { grid: string; d: string; cells: number };
 type DistrictDaily = { district: string; d: string; cells: number };
 
-/* --------- Dynamic RPC loader (prevents env access during prerender) --------- */
+/* --------- Dynamic RPC loader (client-only import to avoid SSR pitfalls) ----- */
 type RpcModule = {
   fetchSubRegions: () => Promise<string[]>;
   fetchSummaryWindow: (f: FilterState, days: number) => Promise<SummaryRow>;
@@ -57,7 +54,6 @@ type RpcModule = {
 };
 
 async function loadRpc(): Promise<RpcModule> {
-  // Import only on the client, at runtime
   const mod = await import("@/app/lib/rpc/eutranHu");
   return {
     fetchSubRegions: mod.fetchSubRegions,
@@ -100,10 +96,7 @@ export default function Page() {
 
   // Cache the loaded RPC module so we import only once
   const rpcRef = useRef<RpcModule | null>(null);
-  const getRpc = async () => {
-    if (!rpcRef.current) rpcRef.current = await loadRpc();
-    return rpcRef.current;
-  };
+  const getRpc = async () => (rpcRef.current ??= await loadRpc());
 
   useEffect(() => {
     (async () => {
@@ -111,10 +104,9 @@ export default function Page() {
         const rpc = await getRpc();
         setSubRegions(await rpc.fetchSubRegions());
       } catch {
-        // ignore subregion init error; page still usable
+        /* ignore */
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadAll = async (f: FilterState, d: number) => {
@@ -146,7 +138,6 @@ export default function Page() {
 
   useEffect(() => {
     void loadAll(filters, days);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // initial
 
   const onChangeSubRegion = (subRegion: string) => {
