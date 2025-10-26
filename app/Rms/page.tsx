@@ -1,9 +1,6 @@
 // app/rms/page.tsx
 "use client";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -404,7 +401,7 @@ export default function RMSPage() {
       </div>
 
       {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items_end">
         {/* Dates */}
         <div className="flex flex-col">
           <label className="text-sm mb-1">From</label>
@@ -454,7 +451,7 @@ export default function RMSPage() {
         </div>
 
         <div className="flex flex-col">
-          <label className="text-sm mb-1">Grid</label>
+          <label className="text_sm mb-1">Grid</label>
           <select
             className="border rounded px-2 py-2"
             value={filters.grid ?? ""}

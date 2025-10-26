@@ -21,19 +21,18 @@ import {
 /* ---------------- Local types (mirror RPC return shapes) ---------------- */
 type IspSeriesPoint = {
   date: string; // ISO yyyy-mm-dd
-  // plus dynamic numeric keys, e.g., "Ping_ms", "DL_Mbps", ...
-  [k: string]: string | number;
+  [k: string]: string | number; // dynamic numeric keys (Ping_ms, DL_Mbps, etc.)
 };
 
 type IspTimeseries = {
   series: IspSeriesPoint[];
-  numericKeys: string[]; // keys present on each series point that are numeric
+  numericKeys: string[];
 };
 
 type IspNumericSummary = {
   numericKeys: string[];
-  avgs: Record<string, number>; // average over range
-  sums: Record<string, number>; // sum over range
+  avgs: Record<string, number>;
+  sums: Record<string, number>;
 };
 
 type FetchArgs = {
@@ -62,7 +61,6 @@ const fmt = (n: number | null | undefined, dp = 2) =>
     ? n.toLocaleString(undefined, { maximumFractionDigits: dp })
     : "—";
 
-// Recharts tooltip value/name typing kept simple to avoid importing Recharts types here
 const tooltipFormatter = (
   value: number | string,
   name: string
@@ -89,7 +87,6 @@ function isoWeekKey(dateStr: string): string {
   return `${year}-W${String(week).padStart(2, "0")}`;
 }
 
-/* Week start (Monday) at UTC midnight + ymd */
 function weekStartUTC(d: Date): Date {
   const t = new Date(
     Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
@@ -100,10 +97,6 @@ function weekStartUTC(d: Date): Date {
 }
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
-/**
- * Weekly average trend for EVERY calendar week in [rangeStart, rangeEnd].
- * Fills missing weeks with avg = 0.
- */
 function buildWeeklyAvgTrendInRange(
   series: IspSeriesPoint[],
   metricKey: string,
@@ -126,7 +119,6 @@ function buildWeeklyAvgTrendInRange(
     }
   }
 
-  // loop bounds from filter (or data edges)
   const minD = rangeStart
     ? new Date(rangeStart + "T00:00:00Z")
     : new Date(String(series[0]?.date));
@@ -150,6 +142,11 @@ function buildWeeklyAvgTrendInRange(
   return out;
 }
 
+/* --------- quick range helpers (last 30 days) --------- */
+const today = new Date();
+const last30From = ymd(new Date(Date.now() - 29 * 24 * 3600 * 1000));
+const todayYmd = ymd(today);
+
 /* ---------------- page ---------------- */
 export default function IspTimeseriesPage() {
   const [dateFrom, setDateFrom] = useState<string | "">("");
@@ -161,12 +158,13 @@ export default function IspTimeseriesPage() {
   const [sum, setSum] = useState<IspNumericSummary | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
 
-  // tooltips follow cursor (via explicit position)
   type ChartMousePos = { x: number; y: number } | null;
   const [mousePosLine, setMousePosLine] = useState<ChartMousePos>(null);
   const [mousePosBar, setMousePosBar] = useState<ChartMousePos>(null);
 
   const rpcRef = useRef<RpcModule | null>(null);
+  const firstLoadRef = useRef(true);
+
   const getRpc = async () => {
     if (!rpcRef.current) rpcRef.current = await loadRpc();
     return rpcRef.current;
@@ -195,26 +193,41 @@ export default function IspTimeseriesPage() {
     return PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length];
   };
 
-  const load = async () => {
+  // Make load accept overrides, so quick actions fetch with fresh values immediately
+  const load = async (opts?: { dateFrom?: string; dateTo?: string }) => {
+    const effectiveFrom = opts?.dateFrom ?? (dateFrom || undefined);
+    const effectiveTo = opts?.dateTo ?? (dateTo || undefined);
+
     try {
       setLoading(true);
       setErr(null);
       const rpc = await getRpc();
       const [seriesRes, summaryRes] = await Promise.all([
         rpc.fetchIspTimeseries({
-          dateFrom: dateFrom || undefined,
-          dateTo: dateTo || undefined,
+          dateFrom: effectiveFrom,
+          dateTo: effectiveTo,
           table: "ISP_summary",
         }),
         rpc.fetchIspNumericSummary({
-          dateFrom: dateFrom || undefined,
-          dateTo: dateTo || undefined,
+          dateFrom: effectiveFrom,
+          dateTo: effectiveTo,
           table: "ISP_summary",
         }),
       ]);
+
       setTs(seriesRes);
       setSum(summaryRes);
-      setSelected(seriesRes.numericKeys); // default: select all
+
+      // Only set default selection on first successful load
+      if (firstLoadRef.current) {
+        setSelected(seriesRes.numericKeys);
+        firstLoadRef.current = false;
+      } else {
+        // Keep user selection but drop keys that no longer exist
+        setSelected((prev) =>
+          prev.filter((k) => seriesRes.numericKeys.includes(k))
+        );
+      }
     } catch (e: unknown) {
       const msg =
         e && typeof e === "object" && "toString" in e
@@ -226,15 +239,18 @@ export default function IspTimeseriesPage() {
     }
   };
 
+  // Set a sensible default (last 30 days) on first mount, then fetch with those exact values
   useEffect(() => {
-    void load(); /* eslint-disable-next-line */
+    setDateFrom(last30From);
+    setDateTo(todayYmd);
+    void load({ dateFrom: last30From, dateTo: todayYmd });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keep selection valid when numericKeys change
   useEffect(() => {
     if (!ts) return;
-    if (selected.some((k) => !ts.numericKeys.includes(k))) {
-      setSelected((prev) => prev.filter((k) => ts.numericKeys.includes(k)));
-    }
+    setSelected((prev) => prev.filter((k) => ts.numericKeys.includes(k)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ts?.numericKeys.join("|")]);
 
@@ -245,7 +261,6 @@ export default function IspTimeseriesPage() {
   const handleSelectAll = () => ts && setSelected(ts.numericKeys);
   const handleClearAll = () => setSelected([]);
 
-  // Pills show **range average** per metric (no “selected week”, no label in header)
   const rangeAvgByKey = useMemo<Record<string, number>>(() => {
     if (!sum) return {};
     const m: Record<string, number> = {};
@@ -253,7 +268,6 @@ export default function IspTimeseriesPage() {
     return m;
   }, [sum]);
 
-  // Weekly bars across EVERY week in the selected date range (gap-filled)
   const primaryMetric = useMemo(
     () => (ts ? selected[0] || ts.numericKeys[0] || null : null),
     [ts, selected]
@@ -261,8 +275,10 @@ export default function IspTimeseriesPage() {
 
   const weeklyBarData = useMemo(() => {
     if (!ts || !primaryMetric) return [];
-    const rangeStart = dateFrom || ts.series[0]?.date || "";
-    const rangeEnd = dateTo || ts.series[ts.series.length - 1]?.date || "";
+    const rangeStart = (dateFrom || ts.series[0]?.date || "") as string;
+    const rangeEnd = (dateTo ||
+      ts.series[ts.series.length - 1]?.date ||
+      "") as string;
     return buildWeeklyAvgTrendInRange(
       ts.series,
       primaryMetric,
@@ -271,7 +287,6 @@ export default function IspTimeseriesPage() {
     );
   }, [ts?.series, ts?.numericKeys, primaryMetric, dateFrom, dateTo]);
 
-  // Table rows = Sum over selected range, descending
   const tableRows = useMemo(() => {
     if (!sum) return [] as Array<{ key: string; value: number }>;
     const rows = sum.numericKeys.map((k) => ({
@@ -319,11 +334,23 @@ export default function IspTimeseriesPage() {
           </div>
 
           <button
-            onClick={load}
+            onClick={() => void load()}
             className="h-10 px-5 rounded-xl bg-gray-900 text-white disabled:opacity-50 shadow-sm hover:opacity-90 transition"
             disabled={loading}
           >
             {loading ? "Loading…" : "Apply"}
+          </button>
+
+          <button
+            onClick={() => {
+              setDateFrom(last30From);
+              setDateTo(todayYmd);
+              void load({ dateFrom: last30From, dateTo: todayYmd });
+            }}
+            className="h-10 px-5 rounded-xl bg-gray-100 text-gray-900 border shadow-sm hover:bg-gray-50 transition"
+            disabled={loading}
+          >
+            Last 30 days
           </button>
 
           {err && (
@@ -334,7 +361,7 @@ export default function IspTimeseriesPage() {
         </div>
       </div>
 
-      {/* Metric toggles (pills show **Avg (range)**) */}
+      {/* Metric toggles (pills show Avg over selected range) */}
       <div className="rounded-2xl border bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 flex-wrap mb-3">
           <button
@@ -393,7 +420,7 @@ export default function IspTimeseriesPage() {
         </div>
       </div>
 
-      {/* Line chart (cursor-follow) */}
+      {/* Line chart */}
       <div className="rounded-2xl border bg-white shadow-sm p-4">
         <div className="px-1 pb-2 font-medium text-gray-800">
           Values vs Date
@@ -454,10 +481,9 @@ export default function IspTimeseriesPage() {
         </div>
       </div>
 
-      {/* Value-only table + Weekly bar chart (every week in range) */}
+      {/* Value table + Weekly bar chart */}
       {sum && (
         <div className="grid lg:grid-cols-2 gap-4">
-          {/* Compact value-only table with gradient bars */}
           <div className="rounded-2xl border bg-white shadow-sm p-3">
             <div className="text-sm text-gray-700 mb-2">
               Values over selected range
@@ -500,7 +526,6 @@ export default function IspTimeseriesPage() {
             </div>
           </div>
 
-          {/* Weekly bar chart — EVERY week in selected date range (gap-filled), tooltip follows cursor */}
           <div className="rounded-2xl border bg-white shadow-sm p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm text-gray-700">

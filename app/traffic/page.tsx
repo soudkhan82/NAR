@@ -1,8 +1,5 @@
-// app/traffic/page.tsx
+// app/traffic/TrafficClient.tsx
 "use client";
-
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -22,7 +19,6 @@ type TrafficDailyRow = {
   date: string; // "YYYY-MM-DD"
   voice_erl: number | null;
   total_gb: number | null;
-  // (keeping other metrics optional for later extension)
   voice_2g?: number | null;
   voice_3g?: number | null;
   volte_voice?: number | null;
@@ -56,7 +52,6 @@ type SortKey = "total_gb" | "voice_erl";
 type SortDir = "asc" | "desc";
 
 /* ------------------------ Number formatters ----------------------- */
-/* Standardize everything to 2 decimals */
 const nf2 = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -68,7 +63,6 @@ const tipFmt = (v: unknown) => nf2.format(Number(v));
 const tipLabelFmt = (label: string) => label;
 
 /* ---------------------- Dynamic Supabase loader ------------------- */
-/** Load the Supabase client lazily on the client only */
 type RpcResult<T> = { data: T | null; error: { message?: string } | null };
 type SupabaseLike = {
   rpc: (
@@ -78,14 +72,12 @@ type SupabaseLike = {
 };
 
 async function loadSupabase(): Promise<SupabaseLike> {
-  // import at runtime only to avoid touching NEXT_PUBLIC_* during prerender
+  // Import at runtime only (client) to avoid build-time env access.
   const mod = await import("@/app/config/supabase-config");
-  // default export is the client in your setup
   return mod.default as unknown as SupabaseLike;
 }
 
 /* ------------------------- Helper mappers ------------------------- */
-
 function toDailySeries(arr: unknown[]): TrafficDailyRow[] {
   const out: TrafficDailyRow[] = [];
   for (const x of arr) {
@@ -148,7 +140,6 @@ function sortLatest(
 }
 
 /* ------------------- Gradient cell background -------------------- */
-/* Creates a left-to-right gradient proportional to value/max */
 function cellGradientStyle(
   value: number,
   max: number,
@@ -156,15 +147,15 @@ function cellGradientStyle(
 ): React.CSSProperties {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   const col =
-    color === "data" ? "rgba(37, 99, 235, 0.18)" : "rgba(22, 163, 74, 0.18)"; // blue / green
+    color === "data" ? "rgba(37, 99, 235, 0.18)" : "rgba(22, 163, 74, 0.18)";
   return {
     background: `linear-gradient(90deg, ${col} ${pct}%, transparent ${pct}%)`,
   };
 }
 
-/* ============================== Page ============================== */
+/* ============================== Component ============================== */
 
-export default function TrafficPage() {
+export default function TrafficClient() {
   const [subs, setSubs] = useState<string[]>([]);
   const [selectedSub, setSelectedSub] = useState<string>("__ALL__");
 
@@ -180,14 +171,13 @@ export default function TrafficPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // cache the loaded client so we import only once
   const sbRef = useRef<SupabaseLike | null>(null);
   const getSB = async () => {
     if (!sbRef.current) sbRef.current = await loadSupabase();
     return sbRef.current;
   };
 
-  /* ---------- Load SubRegion options via RPC fetch_ssl_subregions() ---------- */
+  // Load SubRegion options
   useEffect(() => {
     (async () => {
       try {
@@ -214,7 +204,7 @@ export default function TrafficPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---- Fetch daily series + latest-by-grid/district whenever SubRegion changes ---- */
+  // Fetch series + latest aggregates when SubRegion changes
   useEffect(() => {
     (async () => {
       try {
@@ -255,8 +245,6 @@ export default function TrafficPage() {
     })();
   }, [selectedSub]);
 
-  /* ------------------------- Derived / helpers ------------------------- */
-
   const avgDataGB = useMemo(() => {
     const n = daily.length || 1;
     const sum = daily.reduce((s, r) => s + Number(r.total_gb ?? 0), 0);
@@ -288,7 +276,6 @@ export default function TrafficPage() {
     [daily]
   );
 
-  /* max per table for gradient scaling */
   const gridMax = useMemo(
     () => ({
       total_gb: Math.max(0, ...gridRows.map((r) => r.total_gb)),
@@ -303,8 +290,6 @@ export default function TrafficPage() {
     }),
     [districtRows]
   );
-
-  /* ------------------------------- UI ------------------------------- */
 
   return (
     <div className="p-4 space-y-4">
@@ -333,7 +318,7 @@ export default function TrafficPage() {
       {loading && <div className="text-sm text-gray-500">Loading…</div>}
       {err && <div className="text-sm text-red-600">Error: {err}</div>}
 
-      {/* KPI cards (2 decimals) */}
+      {/* KPI cards */}
       {!loading && !err && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-2xl p-4 shadow-sm border bg-white/60">
@@ -355,7 +340,7 @@ export default function TrafficPage() {
         </div>
       )}
 
-      {/* Two side-by-side, scrollable, sortable tables with gradient numeric cells */}
+      {/* Tables */}
       {!loading && !err && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* District table */}
@@ -522,7 +507,7 @@ export default function TrafficPage() {
         </div>
       )}
 
-      {/* Area charts (Total GB + Voice Erl) with 2-decimal ticks/tooltips */}
+      {/* Area charts */}
       {!loading && !err && series.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {[

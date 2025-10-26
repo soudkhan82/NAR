@@ -131,22 +131,29 @@ export default function EASPage() {
         setSubregions(srs);
         if (srs.length === 1) setSubregion(srs[0]);
       } catch {
-        // ignore — page still usable
+        // non-fatal
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const load = async () => {
+  // Make load accept overrides so "Last 30 days" fetches with the fresh values immediately.
+  const load = async (
+    opts?: { from?: string; to?: string; subregion?: string | null }
+  ) => {
+    const effectiveFrom = opts?.from ?? from;
+    const effectiveTo = opts?.to ?? to;
+    const effectiveSub = opts?.subregion ?? subregion ?? undefined;
+
     setLoading(true);
     try {
       const rpc = await getRpc();
       const [sum, ts, wk, dTot, gTot] = await Promise.all([
-        rpc.fetchSummaryOkNok(from, to, subregion ?? undefined),
-        rpc.fetchTimeseriesNok(from, to, subregion ?? undefined),
-        rpc.fetchWeeklyNok(from, to, subregion ?? undefined),
-        rpc.fetchNokByDistrictTotal(from, to, subregion ?? undefined),
-        rpc.fetchNokByGridTotal(from, to, subregion ?? undefined),
+        rpc.fetchSummaryOkNok(effectiveFrom, effectiveTo, effectiveSub),
+        rpc.fetchTimeseriesNok(effectiveFrom, effectiveTo, effectiveSub),
+        rpc.fetchWeeklyNok(effectiveFrom, effectiveTo, effectiveSub),
+        rpc.fetchNokByDistrictTotal(effectiveFrom, effectiveTo, effectiveSub),
+        rpc.fetchNokByGridTotal(effectiveFrom, effectiveTo, effectiveSub),
       ]);
       setSummary(sum);
       setTsNok(ts);
@@ -159,7 +166,7 @@ export default function EASPage() {
   };
 
   useEffect(() => {
-    void load(); // initial load
+    void load(); // initial load with defaults
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -230,7 +237,11 @@ export default function EASPage() {
             </Select>
           </div>
           <div className="flex items-end">
-            <Button className="w-full" onClick={load} disabled={loading}>
+            <Button
+              className="w-full"
+              onClick={() => void load()} // use current state
+              disabled={loading}
+            >
               {loading ? "Loading..." : "Apply"}
             </Button>
           </div>
@@ -239,10 +250,16 @@ export default function EASPage() {
               variant="secondary"
               className="w-full"
               onClick={() => {
-                setFrom(iso(thirtyDaysAgo));
-                setTo(iso(today));
-                setSubregion(subregions.length === 1 ? subregions[0] : null);
-                void load();
+                const nextFrom = iso(thirtyDaysAgo);
+                const nextTo = iso(today);
+                const nextSub =
+                  subregions.length === 1 ? subregions[0] : null;
+                // update UI state
+                setFrom(nextFrom);
+                setTo(nextTo);
+                setSubregion(nextSub);
+                // fetch immediately with the intended values (no stale closure)
+                void load({ from: nextFrom, to: nextTo, subregion: nextSub });
               }}
             >
               Last 30 days

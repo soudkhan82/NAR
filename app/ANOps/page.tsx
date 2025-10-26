@@ -1,7 +1,9 @@
 // app/anops/page.tsx
 "use client";
 
-export const dynamic = "force-dynamic"; // ensure no static prerender
+// Keep this a client-only page and prevent any pre-render cache traps
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 import { useEffect, useMemo, useState } from "react";
 import type {
@@ -32,9 +34,7 @@ import {
 } from "recharts";
 
 /** -------- lazy load RPCs on the client only -------- */
-let _rpc:
-  | (typeof import("@/app/lib/rpc/anops"))
-  | null = null;
+let _rpc: typeof import("@/app/lib/rpc/anops") | null = null;
 
 async function getRpc() {
   if (_rpc) return _rpc;
@@ -72,7 +72,10 @@ const emptyFilters: FilterState = {
 const pct = (n: number | null | undefined) =>
   typeof n === "number" && Number.isFinite(n) ? `${n.toFixed(2)}%` : "—";
 
-const heat = (v: number | null | undefined, tech: "2g" | "3g" | "4g"): string => {
+const heat = (
+  v: number | null | undefined,
+  tech: "2g" | "3g" | "4g"
+): string => {
   if (typeof v !== "number" || !Number.isFinite(v)) return "transparent";
   const val = Math.max(0, Math.min(100, v));
   const rgb =
@@ -90,15 +93,17 @@ export default function ANOpsPage() {
   const [busy, setBusy] = useState(false);
   const [projects, setProjects] = useState<string[]>([]);
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
-  const [opts, setOpts] = useState<{ subregions: string[]; districts: string[]; grids: string[]; }>(
-    { subregions: [], districts: [], grids: [] }
-  );
+  const [opts, setOpts] = useState<{
+    subregions: string[];
+    districts: string[];
+    grids: string[];
+  }>({ subregions: [], districts: [], grids: [] });
   const [rows, setRows] = useState<SiteDetailRow[]>([]);
   const [ts, setTs] = useState<TimeseriesRow[]>([]);
   const [attempts, setAttempts] = useState<AttemptStatusRow[]>([]);
   const [sitesPool, setSitesPool] = useState<SiteRow[]>([]);
 
-  // default last 180 days
+  // default last 180 days — client-only
   useEffect(() => {
     setFilters((f) => {
       if (f.dateFrom || f.dateTo) return f;
@@ -160,7 +165,13 @@ export default function ANOpsPage() {
       });
       setSitesPool(list);
     })();
-  }, [filters.projects, filters.siteClass, filters.district, filters.grid, filters.search]);
+  }, [
+    filters.projects,
+    filters.siteClass,
+    filters.district,
+    filters.grid,
+    filters.search,
+  ]);
 
   // Main data
   useEffect(() => {
@@ -221,7 +232,9 @@ export default function ANOpsPage() {
       const has = f.projects.includes(name);
       return {
         ...f,
-        projects: has ? f.projects.filter((p) => p !== name) : [...f.projects, name],
+        projects: has
+          ? f.projects.filter((p) => p !== name)
+          : [...f.projects, name],
         site: null,
       };
     });
@@ -241,15 +254,26 @@ export default function ANOpsPage() {
 
   // KPIs
   const { avg2g, avg3g, avg4g } = useMemo(() => {
-    const v2 = ts.map((r) => (typeof r.v2g === "number" ? r.v2g : null)).filter((n): n is number => n !== null);
-    const v3 = ts.map((r) => (typeof r.v3g === "number" ? r.v3g : null)).filter((n): n is number => n !== null);
-    const v4 = ts.map((r) => (typeof r.v4g === "number" ? r.v4g : null)).filter((n): n is number => n !== null);
-    const mean = (a: number[]) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
+    const v2 = ts
+      .map((r) => (typeof r.v2g === "number" ? r.v2g : null))
+      .filter((n): n is number => n !== null);
+    const v3 = ts
+      .map((r) => (typeof r.v3g === "number" ? r.v3g : null))
+      .filter((n): n is number => n !== null);
+    const v4 = ts
+      .map((r) => (typeof r.v4g === "number" ? r.v4g : null))
+      .filter((n): n is number => n !== null);
+    const mean = (a: number[]) =>
+      a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
     return { avg2g: mean(v2), avg3g: mean(v3), avg4g: mean(v4) };
   }, [ts]);
 
   const attemptsTotal = useMemo(
-    () => attempts.map((a) => ({ dt: a.dt, total: (a.attempted ?? 0) + (a.resolved ?? 0) })),
+    () =>
+      attempts.map((a) => ({
+        dt: a.dt,
+        total: (a.attempted ?? 0) + (a.resolved ?? 0),
+      })),
     [attempts]
   );
 
@@ -259,7 +283,10 @@ export default function ANOpsPage() {
       const key = r.SubRegion ?? "—";
       map.set(key, (map.get(key) ?? 0) + 1);
     }
-    return Array.from(map.entries()).map(([SubRegion, count]) => ({ SubRegion, count }));
+    return Array.from(map.entries()).map(([SubRegion, count]) => ({
+      SubRegion,
+      count,
+    }));
   }, [sitesPool]);
 
   const Spinner = () => (
@@ -269,9 +296,12 @@ export default function ANOpsPage() {
   return (
     <div className="p-4 space-y-5 bg-gradient-to-b from-white to-slate-50">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Access Network — Progress & Availability</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Access Network — Progress & Availability
+        </h1>
         <div className="text-xs text-slate-500">
-          Window: <strong>{filters.dateFrom ?? "min"}</strong> → <strong>{filters.dateTo ?? "max"}</strong>
+          Window: <strong>{filters.dateFrom ?? "min"}</strong> →{" "}
+          <strong>{filters.dateTo ?? "max"}</strong>
         </div>
       </header>
 
@@ -279,7 +309,11 @@ export default function ANOpsPage() {
       <section className="rounded-2xl border p-4 bg-gradient-to-r from-sky-50 to-indigo-50 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <span className="font-medium">Projects</span>
-          <button className="text-sm underline disabled:opacity-50" disabled={busy} onClick={onClearProjects}>
+          <button
+            className="text-sm underline disabled:opacity-50"
+            disabled={busy}
+            onClick={onClearProjects}
+          >
             {busy ? (
               <span className="inline-flex items-center gap-2">
                 <Spinner /> Clearing…
@@ -295,14 +329,26 @@ export default function ANOpsPage() {
           <span className="text-xs text-slate-600">SiteClassification:</span>
           <div className="inline-flex rounded-lg border bg-white shadow-sm overflow-hidden">
             <button
-              className={`px-3 py-1.5 text-xs ${filters.siteClass === "PGS" ? "bg-indigo-600 text-white" : "hover:bg-slate-50"}`}
-              onClick={() => setFilters((f) => ({ ...f, siteClass: "PGS", site: null }))}
+              className={`px-3 py-1.5 text-xs ${
+                filters.siteClass === "PGS"
+                  ? "bg-indigo-600 text-white"
+                  : "hover:bg-slate-50"
+              }`}
+              onClick={() =>
+                setFilters((f) => ({ ...f, siteClass: "PGS", site: null }))
+              }
             >
               PGS (Platinum/Gold/Strategic)
             </button>
             <button
-              className={`px-3 py-1.5 text-xs border-l ${filters.siteClass === "SB" ? "bg-indigo-600 text-white" : "hover:bg-slate-50"}`}
-              onClick={() => setFilters((f) => ({ ...f, siteClass: "SB", site: null }))}
+              className={`px-3 py-1.5 text-xs border-l ${
+                filters.siteClass === "SB"
+                  ? "bg-indigo-600 text-white"
+                  : "hover:bg-slate-50"
+              }`}
+              onClick={() =>
+                setFilters((f) => ({ ...f, siteClass: "SB", site: null }))
+              }
             >
               SB (Silver/Bronze)
             </button>
@@ -311,7 +357,10 @@ export default function ANOpsPage() {
 
         <div className="flex flex-wrap gap-2">
           {projects.map((p) => (
-            <label key={p} className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-white/80 hover:bg-white shadow-sm border">
+            <label
+              key={p}
+              className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-white/80 hover:bg-white shadow-sm border"
+            >
               <input
                 type="checkbox"
                 checked={filters.projects.includes(p)}
@@ -334,7 +383,9 @@ export default function ANOpsPage() {
             onChange={(e) => onPick("subregion", e.target.value || null)}
           >
             {opts.subregions.includes(DEFAULT_SUBREGION) && (
-              <option value={DEFAULT_SUBREGION}>{DEFAULT_SUBREGION} (default)</option>
+              <option value={DEFAULT_SUBREGION}>
+                {DEFAULT_SUBREGION} (default)
+              </option>
             )}
             {opts.subregions
               .filter((s) => s !== DEFAULT_SUBREGION)
@@ -382,7 +433,9 @@ export default function ANOpsPage() {
             type="date"
             className="w-full border rounded-lg p-2 bg-white"
             value={filters.dateFrom ?? ""}
-            onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value || null }))}
+            onChange={(e) =>
+              setFilters((f) => ({ ...f, dateFrom: e.target.value || null }))
+            }
           />
         </div>
         <div>
@@ -391,7 +444,9 @@ export default function ANOpsPage() {
             type="date"
             className="w-full border rounded-lg p-2 bg-white"
             value={filters.dateTo ?? ""}
-            onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value || null }))}
+            onChange={(e) =>
+              setFilters((f) => ({ ...f, dateTo: e.target.value || null }))
+            }
           />
         </div>
       </section>
@@ -399,16 +454,28 @@ export default function ANOpsPage() {
       {/* KPI Cards */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="text-[11px] uppercase tracking-wide text-slate-500">Net Average 2G</div>
-          <div className="mt-1 text-2xl font-semibold text-sky-700">{pct(avg2g)}</div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+            Net Average 2G
+          </div>
+          <div className="mt-1 text-2xl font-semibold text-sky-700">
+            {pct(avg2g)}
+          </div>
         </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="text-[11px] uppercase tracking-wide text-slate-500">Net Average 3G</div>
-          <div className="mt-1 text-2xl font-semibold text-emerald-700">{pct(avg3g)}</div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+            Net Average 3G
+          </div>
+          <div className="mt-1 text-2xl font-semibold text-emerald-700">
+            {pct(avg3g)}
+          </div>
         </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="text-[11px] uppercase tracking-wide text-slate-500">Net Average 4G</div>
-          <div className="mt-1 text-2xl font-semibold text-amber-700">{pct(avg4g)}</div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+            Net Average 4G
+          </div>
+          <div className="mt-1 text-2xl font-semibold text-amber-700">
+            {pct(avg4g)}
+          </div>
         </div>
       </section>
 
@@ -422,7 +489,9 @@ export default function ANOpsPage() {
               placeholder="Search…"
               className="border rounded-lg p-2 text-xs"
               value={filters.search ?? ""}
-              onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value || null }))}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, search: e.target.value || null }))
+              }
             />
           </div>
           <div className="mb-2 text-xs text-slate-600">
@@ -455,22 +524,43 @@ export default function ANOpsPage() {
               <tbody>
                 {rows.map((r, i) => (
                   <tr
-                    key={`${r.SiteName}-${r.ProjectName ?? ""}`}
-                    className={`${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-indigo-50 cursor-pointer`}
-                    onClick={() => setFilters((f) => ({ ...f, site: r.SiteName }))}
+                    key={`${r.SiteName}-${r.ProjectName ?? ""}-${i}`}
+                    className={`${
+                      i % 2 === 0 ? "bg-white" : "bg-slate-50"
+                    } hover:bg-indigo-50 cursor-pointer`}
+                    onClick={() =>
+                      setFilters((f) => ({ ...f, site: r.SiteName }))
+                    }
                     title="Click to focus the time-series on this site"
                   >
-                    <td className="p-2 whitespace-nowrap overflow-hidden text-ellipsis">{r.SiteName}</td>
-                    <td className="p-2 whitespace-nowrap overflow-hidden text-ellipsis">{r.ProjectName ?? "—"}</td>
-                    <td className="p-2 whitespace-nowrap overflow-hidden text-ellipsis">{r.Status ?? "—"}</td>
-                    <td className="p-2 whitespace-nowrap overflow-hidden text-ellipsis">{r.Attempt_date ?? "—"}</td>
-                    <td className="p-2 text-right whitespace-nowrap font-medium rounded" style={{ background: heat(r.v2g, "2g") }}>
+                    <td className="p-2 whitespace-nowrap overflow-hidden text-ellipsis">
+                      {r.SiteName}
+                    </td>
+                    <td className="p-2 whitespace-nowrap overflow-hidden text-ellipsis">
+                      {r.ProjectName ?? "—"}
+                    </td>
+                    <td className="p-2 whitespace-nowrap overflow-hidden text-ellipsis">
+                      {r.Status ?? "—"}
+                    </td>
+                    <td className="p-2 whitespace-nowrap overflow-hidden text-ellipsis">
+                      {r.Attempt_date ?? "—"}
+                    </td>
+                    <td
+                      className="p-2 text-right whitespace-nowrap font-medium rounded"
+                      style={{ background: heat(r.v2g, "2g") }}
+                    >
                       {pct(r.v2g)}
                     </td>
-                    <td className="p-2 text-right whitespace-nowrap font-medium rounded" style={{ background: heat(r.v3g, "3g") }}>
+                    <td
+                      className="p-2 text-right whitespace-nowrap font-medium rounded"
+                      style={{ background: heat(r.v3g, "3g") }}
+                    >
                       {pct(r.v3g)}
                     </td>
-                    <td className="p-2 text-right whitespace-nowrap font-medium rounded" style={{ background: heat(r.v4g, "4g") }}>
+                    <td
+                      className="p-2 text-right whitespace-nowrap font-medium rounded"
+                      style={{ background: heat(r.v4g, "4g") }}
+                    >
                       {pct(r.v4g)}
                     </td>
                   </tr>
@@ -509,19 +599,45 @@ export default function ANOpsPage() {
             </div>
             <div style={{ width: "100%", height: 360 }}>
               <ResponsiveContainer>
-                <LineChart data={ts} margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
+                <LineChart
+                  data={ts}
+                  margin={{ top: 10, right: 20, bottom: 10, left: 0 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="dt" tick={{ fontSize: 11 }} />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
                   <Tooltip
                     formatter={(v: unknown) =>
-                      typeof v === "number" ? `${(v as number).toFixed(2)}%` : (v as string)
+                      typeof v === "number"
+                        ? `${(v as number).toFixed(2)}%`
+                        : (v as string)
                     }
                   />
                   <Legend />
-                  <Line type="monotone" dataKey="v2g" name="2G" dot={false} stroke="#2563eb" strokeWidth={2} />
-                  <Line type="monotone" dataKey="v3g" name="3G" dot={false} stroke="#059669" strokeWidth={2} />
-                  <Line type="monotone" dataKey="v4g" name="4G" dot={false} stroke="#f59e0b" strokeWidth={2} />
+                  <Line
+                    type="monotone"
+                    dataKey="v2g"
+                    name="2G"
+                    dot={false}
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="v3g"
+                    name="3G"
+                    dot={false}
+                    stroke="#059669"
+                    strokeWidth={2}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="v4g"
+                    name="4G"
+                    dot={false}
+                    stroke="#f59e0b"
+                    strokeWidth={2}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -541,7 +657,10 @@ export default function ANOpsPage() {
             </div>
             <div style={{ width: "100%", height: 360 }}>
               <ResponsiveContainer>
-                <BarChart data={attemptsTotal} margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
+                <BarChart
+                  data={attemptsTotal}
+                  margin={{ top: 10, right: 20, bottom: 10, left: 0 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="dt" tick={{ fontSize: 11 }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
@@ -562,12 +681,19 @@ export default function ANOpsPage() {
           {/* SubRegion counts */}
           <div className="rounded-2xl border p-3 bg-white shadow-sm relative md:col-span-2">
             <div className="flex items-center justify-between mb-2">
-              <span className="font-medium">Sites by SubRegion (ignores SubRegion filter)</span>
-              <span className="text-[11px] text-slate-500">Projects/District/Grid/SiteClass applied</span>
+              <span className="font-medium">
+                Sites by SubRegion (ignores SubRegion filter)
+              </span>
+              <span className="text-[11px] text-slate-500">
+                Projects/District/Grid/SiteClass applied
+              </span>
             </div>
             <div style={{ width: "100%", height: 280 }}>
               <ResponsiveContainer>
-                <BarChart data={subregionCounts} margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
+                <BarChart
+                  data={subregionCounts}
+                  margin={{ top: 10, right: 20, bottom: 10, left: 0 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="SubRegion" tick={{ fontSize: 11 }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />

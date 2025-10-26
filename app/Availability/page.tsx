@@ -1,9 +1,8 @@
 // app/availability/page.tsx
 "use client";
-export const dynamic = "force-dynamic";
 
 import { useEffect, useMemo, useState } from "react";
-import type { BundleFilters, BundleResult } from "@/app/lib/rpc/avail"; // type-only import = safe; no runtime load
+import type { BundleFilters, BundleResult } from "@/app/lib/rpc/avail";
 
 import { Cards } from "@/app/components/Cards";
 import AreaChart from "@/app/components/AreaChart";
@@ -12,14 +11,9 @@ import HorizontalBarChart from "@/app/components/HorizontalBarChart";
 import ComboBox from "@/app/components/ComboBox";
 
 /* =========================================================
-   Availability Page (polished UI)
-   - Sticky, glassy filter bar
-   - Containerized layout with better spacing/typography
-   - Skeletons while loading, clean error banner
-   - 4 charts grid + District chart
+   Availability Page (simplified client-only version)
    ========================================================= */
 
-/** ---- lazy-load RPCs only in the browser ---- */
 let _rpc: typeof import("@/app/lib/rpc/avail") | null = null;
 async function getRpc() {
   if (_rpc) return _rpc;
@@ -28,7 +22,6 @@ async function getRpc() {
 }
 
 export default function AvailabilityPage() {
-  /* ---------- defaults ---------- */
   const todayStr = () => new Date().toISOString().slice(0, 10);
   const last30Str = () => {
     const d = new Date();
@@ -37,16 +30,17 @@ export default function AvailabilityPage() {
   };
   const DEFAULT_SUBREGION = "North-1";
 
-  /* ---------- filter state ---------- */
-  const [subregion, setSubregion] = useState<string>(DEFAULT_SUBREGION);
-  const [grid, setGrid] = useState<string>("");
-  const [district, setDistrict] = useState<string>("");
-  const [sitename, setSitename] = useState<string>("");
+  const [subregion, setSubregion] = useState(DEFAULT_SUBREGION);
+  const [grid, setGrid] = useState("");
+  const [district, setDistrict] = useState("");
+  const [sitename, setSitename] = useState("");
+  const [dateFrom, setDateFrom] = useState(last30Str());
+  const [dateTo, setDateTo] = useState(todayStr());
 
-  const [dateFrom, setDateFrom] = useState<string>(last30Str());
-  const [dateTo, setDateTo] = useState<string>(todayStr());
+  const [bundle, setBundle] = useState<BundleResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  // Reset dependent filters when parents change
   useEffect(() => {
     setGrid("");
     setDistrict("");
@@ -60,11 +54,6 @@ export default function AvailabilityPage() {
     setSitename("");
   }, [district]);
 
-  /* ---------- data ---------- */
-  const [bundle, setBundle] = useState<BundleResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
   const filters: BundleFilters = useMemo(
     () => ({
       subregion: blankToNull(subregion),
@@ -77,7 +66,6 @@ export default function AvailabilityPage() {
     [subregion, grid, district, sitename, dateFrom, dateTo]
   );
 
-  // Auto-fetch on any change — uses dynamic import (client-only)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -98,30 +86,19 @@ export default function AvailabilityPage() {
     };
   }, [filters]);
 
-  // Dropdown providers (scoped by SubRegion) — also via dynamic import
-  const getSubregions = async (_: string) => {
-    const rpc = await getRpc();
-    return rpc.fetchSubregions();
-  };
-  const getGrids = async (_: string) => {
-    const rpc = await getRpc();
-    return rpc.fetchGrids(blankToNull(subregion));
-  };
-  const getDistricts = async (_: string) => {
-    const rpc = await getRpc();
-    return rpc.fetchDistricts(blankToNull(subregion), blankToNull(grid));
-  };
-  const getSiteNamesCb = async (term: string) => {
-    const rpc = await getRpc();
-    return rpc.fetchSiteNames(
+  const getSubregions = async () => (await getRpc()).fetchSubregions();
+  const getGrids = async () =>
+    (await getRpc()).fetchGrids(blankToNull(subregion));
+  const getDistricts = async () =>
+    (await getRpc()).fetchDistricts(blankToNull(subregion), blankToNull(grid));
+  const getSiteNamesCb = async (term: string) =>
+    (await getRpc()).fetchSiteNames(
       term,
       blankToNull(subregion),
       blankToNull(grid),
       blankToNull(district)
     );
-  };
 
-  // Reset to defaults
   const resetFilters = () => {
     setSubregion(DEFAULT_SUBREGION);
     setGrid("");
@@ -139,26 +116,13 @@ export default function AvailabilityPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white via-slate-50 to-slate-100">
-      {/* Header */}
-      <header className="sticky top-0 z-20 backdrop-blur supports-[backdrop-filter]:bg-white/60 bg-white/90 border-b">
-        <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-lg md:text-xl font-semibold tracking-tight">
-                Availability Dashboard
-              </h1>
-              <p className="text-xs md:text-sm text-slate-600">
-                SubRegion defaults to{" "}
-                <span className="font-medium">North-1</span>. Other filters
-                follow it.
-              </p>
-            </div>
-            <div className="hidden md:block text-xs text-slate-500">
-              {dateFrom} → {dateTo}
-            </div>
-          </div>
+      <header className="sticky top-0 z-20 backdrop-blur bg-white/90 border-b">
+        <div className="mx-auto max-w-7xl px-6 py-4">
+          <h1 className="text-lg font-semibold">Availability Dashboard</h1>
+          <p className="text-xs text-slate-600">
+            SubRegion defaults to <span className="font-medium">North-1</span>.
+          </p>
 
-          {/* Filter bar (glassy card) */}
           <div className="mt-3 rounded-2xl border bg-white/70 shadow-sm">
             <div className="grid md:grid-cols-6 gap-2 p-3">
               <ComboBox
@@ -188,10 +152,9 @@ export default function AvailabilityPage() {
               <DateInput label="From" value={dateFrom} onChange={setDateFrom} />
               <DateInput label="To" value={dateTo} onChange={setDateTo} />
             </div>
-
             <div className="flex items-center gap-2 p-3 pt-0">
               <Button variant="ghost" onClick={resetFilters}>
-                <RefreshIcon className="mr-1.5" /> Reset to defaults
+                Reset to defaults
               </Button>
               <div className="ml-auto text-xs text-slate-500">
                 {loading ? "Refreshing…" : "Up to date"}
@@ -201,12 +164,9 @@ export default function AvailabilityPage() {
         </div>
       </header>
 
-      {/* Main */}
-      <main className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8 py-6 space-y-6">
-        {/* Error banner */}
+      <main className="mx-auto max-w-7xl px-6 py-6 space-y-6">
         {err && <Banner type="error" message={err} />}
 
-        {/* Cards or skeleton */}
         {loading && !bundle ? (
           <SkeletonCards />
         ) : (
@@ -219,11 +179,7 @@ export default function AvailabilityPage() {
           )
         )}
 
-        {/* Charts */}
-        <Section
-          title="Trends"
-          subtitle="Daily areas & weekly bars for PGS and SB"
-        >
+        <Section title="Trends" subtitle="Daily & weekly availability">
           {loading && !hasData ? (
             <SkeletonGrid count={4} />
           ) : hasData ? (
@@ -258,11 +214,10 @@ export default function AvailabilityPage() {
               />
             </div>
           ) : (
-            <EmptyState message="No trend data for the selected filters/dates." />
+            <EmptyState message="No trend data found." />
           )}
         </Section>
 
-        {/* District averages */}
         <Section
           title="Distribution"
           subtitle="Average overall availability by District"
@@ -270,31 +225,29 @@ export default function AvailabilityPage() {
           {loading && !bundle ? (
             <SkeletonGrid count={1} tall />
           ) : bundle && bundle.by_district?.length ? (
-            <div className="grid gap-4">
-              <HorizontalBarChart
-                title="Avg Overall by District"
-                data={bundle.by_district.map((r) => ({
-                  ...r,
-                  value: r.value ?? 0,
-                }))}
-                color="#8b5cf6"
-                maxItems={15}
-              />
-            </div>
+            <HorizontalBarChart
+              title="Avg Overall by District"
+              data={bundle.by_district.map((r) => ({
+                ...r,
+                value: r.value ?? 0,
+              }))}
+              color="#8b5cf6"
+              maxItems={15}
+            />
           ) : (
-            <EmptyState message="No district data for the selected filters/dates." />
+            <EmptyState message="No district data found." />
           )}
         </Section>
 
         <footer className="pt-2 pb-10 text-xs text-slate-500">
-          Data reflects filters above. Overall is averaged per selection scope.
+          Data reflects filters above.
         </footer>
       </main>
     </div>
   );
 }
 
-/* ----------------- helpers & tiny UI atoms (local) ----------------- */
+/* ----------------- helpers ----------------- */
 function blankToNull(s?: string | null) {
   return s && s.trim() !== "" ? s : null;
 }
@@ -302,18 +255,11 @@ function num(n: number | null | undefined) {
   return n == null ? null : Number(n);
 }
 
-function DateInput({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
+/* small atoms reused below (same as before) */
+function DateInput({ label, value, onChange }: any) {
   return (
     <label className="flex flex-col gap-1 text-sm">
-      <span className="opacity-75">{label} (YYYY-MM-DD)</span>
+      <span className="opacity-75">{label}</span>
       <input
         type="date"
         className="px-2 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-slate-300"
@@ -323,16 +269,7 @@ function DateInput({
     </label>
   );
 }
-
-function Section({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, subtitle, children }: any) {
   return (
     <section className="space-y-3">
       <div>
@@ -345,16 +282,7 @@ function Section({
     </section>
   );
 }
-
-function Button({
-  children,
-  onClick,
-  variant = "solid",
-}: {
-  children: React.ReactNode;
-  onClick?: () => void;
-  variant?: "solid" | "ghost";
-}) {
+function Button({ children, onClick, variant = "solid" }: any) {
   const base = "inline-flex items-center rounded-lg text-sm transition";
   const styles =
     variant === "ghost"
@@ -366,28 +294,7 @@ function Button({
     </button>
   );
 }
-
-function RefreshIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-    >
-      <path d="M17.65 6.35A7.95 7.95 0 0012 4a8 8 0 108 8h-2a6 6 0 11-6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-    </svg>
-  );
-}
-
-function Banner({
-  type = "info",
-  message,
-}: {
-  type?: "info" | "error";
-  message: string;
-}) {
+function Banner({ type = "info", message }: any) {
   const isError = type === "error";
   const classes = isError
     ? "bg-rose-50 text-rose-700 border-rose-200"
@@ -398,7 +305,6 @@ function Banner({
     </div>
   );
 }
-
 function SkeletonCards() {
   return (
     <div className="grid md:grid-cols-3 gap-4">
@@ -414,14 +320,7 @@ function SkeletonCards() {
     </div>
   );
 }
-
-function SkeletonGrid({
-  count = 4,
-  tall = false,
-}: {
-  count?: number;
-  tall?: boolean;
-}) {
+function SkeletonGrid({ count = 4, tall = false }: any) {
   return (
     <div className={`grid ${count > 1 ? "md:grid-cols-2" : ""} gap-4`}>
       {[...Array(count)].map((_, i) => (
@@ -438,8 +337,7 @@ function SkeletonGrid({
     </div>
   );
 }
-
-function EmptyState({ message }: { message: string }) {
+function EmptyState({ message }: any) {
   return (
     <div className="rounded-2xl border bg-white p-8 text-center text-sm text-slate-600">
       {message}
