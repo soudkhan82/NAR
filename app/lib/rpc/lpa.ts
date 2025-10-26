@@ -7,7 +7,7 @@ export type AgingSlabCount = { aging_slab: string | null; cnt: number };
 export type TimePoint = { day: string; cnt: number };
 export type DistrictCount = { district: string | null; cnt: number };
 export type GridCount = { grid: string | null; cnt: number };
-
+export type SlabBucket = AgingSlabCount;
 /** For region bar widgets */
 export type RegionBucket = { region: string | null; cnt: number };
 
@@ -19,8 +19,6 @@ export type FilterState = {
   aging_slab: string | null;
   search: string | null;
 };
-
-
 
 export type LpaSummary = {
   names: NameCount[];
