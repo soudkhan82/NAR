@@ -1,18 +1,12 @@
-// app/anops/page.tsx
+// app/ANOps/page.tsx
 "use client";
 
-// Keep this a client-only page and prevent any pre-render cache traps
+// Client-only page: no prerender cache traps
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { useEffect, useMemo, useState } from "react";
 import type {
-  fetchProjectNames as _t1,
-  fetchFilterOptions as _t2,
-  fetchSites as _t3,
-  fetchSitesDetail as _t4,
-  fetchTimeseries as _t5,
-  fetchAttemptStatus as _t6,
   SiteRow,
   SiteDetailRow,
   TimeseriesRow,
@@ -35,10 +29,8 @@ import {
 
 /** -------- lazy load RPCs on the client only -------- */
 let _rpc: typeof import("@/app/lib/rpc/anops") | null = null;
-
 async function getRpc() {
   if (_rpc) return _rpc;
-  // dynamic import happens only in the browser (inside effects/handlers)
   _rpc = await import("@/app/lib/rpc/anops");
   return _rpc!;
 }
@@ -225,7 +217,7 @@ export default function ANOpsPage() {
     })();
   }, [filters]);
 
-  // Checkbox handlers
+  // Handlers
   const onToggleProject = (name: string) => {
     setBusy(true);
     setFilters((f) => {
@@ -324,7 +316,7 @@ export default function ANOpsPage() {
           </button>
         </div>
 
-        {/* NEW: SiteClassification segmented control */}
+        {/* SiteClassification */}
         <div className="mb-3 flex items-center gap-2">
           <span className="text-xs text-slate-600">SiteClassification:</span>
           <div className="inline-flex rounded-lg border bg-white shadow-sm overflow-hidden">
@@ -524,7 +516,7 @@ export default function ANOpsPage() {
               <tbody>
                 {rows.map((r, i) => (
                   <tr
-                    key={`${r.SiteName}-${r.ProjectName ?? ""}-${i}`}
+                    key={`${r.SiteName ?? ""}-${r.ProjectName ?? ""}-${i}`}
                     className={`${
                       i % 2 === 0 ? "bg-white" : "bg-slate-50"
                     } hover:bg-indigo-50 cursor-pointer`}
