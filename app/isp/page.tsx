@@ -1,14 +1,10 @@
 // app/isp/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  fetchIspTimeseries,
-  fetchIspNumericSummary,
-  type IspTimeseries,
-  type IspNumericSummary,
-  type IspSeriesPoint,
-} from "@/app/lib/rpc/isp";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -21,10 +17,44 @@ import {
   BarChart,
   Bar,
 } from "recharts";
-import type {
-  ValueType,
-  NameType,
-} from "recharts/types/component/DefaultTooltipContent";
+
+/* ---------------- Local types (mirror RPC return shapes) ---------------- */
+type IspSeriesPoint = {
+  date: string; // ISO yyyy-mm-dd
+  // plus dynamic numeric keys, e.g., "Ping_ms", "DL_Mbps", ...
+  [k: string]: string | number;
+};
+
+type IspTimeseries = {
+  series: IspSeriesPoint[];
+  numericKeys: string[]; // keys present on each series point that are numeric
+};
+
+type IspNumericSummary = {
+  numericKeys: string[];
+  avgs: Record<string, number>; // average over range
+  sums: Record<string, number>; // sum over range
+};
+
+type FetchArgs = {
+  dateFrom?: string;
+  dateTo?: string;
+  table: string; // e.g. "ISP_summary"
+};
+
+/* --------------- Dynamic RPC loader (import at runtime only) --------------- */
+type RpcModule = {
+  fetchIspTimeseries: (args: FetchArgs) => Promise<IspTimeseries>;
+  fetchIspNumericSummary: (args: FetchArgs) => Promise<IspNumericSummary>;
+};
+
+async function loadRpc(): Promise<RpcModule> {
+  const mod = await import("@/app/lib/rpc/isp");
+  return {
+    fetchIspTimeseries: mod.fetchIspTimeseries,
+    fetchIspNumericSummary: mod.fetchIspNumericSummary,
+  };
+}
 
 /* ---------------- helpers ---------------- */
 const fmt = (n: number | null | undefined, dp = 2) =>
@@ -32,10 +62,11 @@ const fmt = (n: number | null | undefined, dp = 2) =>
     ? n.toLocaleString(undefined, { maximumFractionDigits: dp })
     : "—";
 
+// Recharts tooltip value/name typing kept simple to avoid importing Recharts types here
 const tooltipFormatter = (
-  value: ValueType,
-  name: NameType
-): [React.ReactNode, NameType] => {
+  value: number | string,
+  name: string
+): [string, string] => {
   const num = typeof value === "number" ? value : Number(value);
   const out =
     typeof num === "number" && Number.isFinite(num)
@@ -88,7 +119,7 @@ function buildWeeklyAvgTrendInRange(
     const d = new Date(String(r.date));
     const ws = weekStartUTC(d);
     const key = ymd(ws);
-    const v = (r as any)[metricKey];
+    const v = r[metricKey];
     if (typeof v === "number" && Number.isFinite(v)) {
       sums.set(key, (sums.get(key) ?? 0) + v);
       counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -135,6 +166,12 @@ export default function IspTimeseriesPage() {
   const [mousePosLine, setMousePosLine] = useState<ChartMousePos>(null);
   const [mousePosBar, setMousePosBar] = useState<ChartMousePos>(null);
 
+  const rpcRef = useRef<RpcModule | null>(null);
+  const getRpc = async () => {
+    if (!rpcRef.current) rpcRef.current = await loadRpc();
+    return rpcRef.current;
+  };
+
   const PALETTE = [
     "#1f77b4",
     "#ff7f0e",
@@ -162,13 +199,14 @@ export default function IspTimeseriesPage() {
     try {
       setLoading(true);
       setErr(null);
+      const rpc = await getRpc();
       const [seriesRes, summaryRes] = await Promise.all([
-        fetchIspTimeseries({
+        rpc.fetchIspTimeseries({
           dateFrom: dateFrom || undefined,
           dateTo: dateTo || undefined,
           table: "ISP_summary",
         }),
-        fetchIspNumericSummary({
+        rpc.fetchIspNumericSummary({
           dateFrom: dateFrom || undefined,
           dateTo: dateTo || undefined,
           table: "ISP_summary",
@@ -177,15 +215,19 @@ export default function IspTimeseriesPage() {
       setTs(seriesRes);
       setSum(summaryRes);
       setSelected(seriesRes.numericKeys); // default: select all
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to load");
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === "object" && "toString" in e
+          ? String(e)
+          : "Failed to load";
+      setErr(msg);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    load(); /* eslint-disable-next-line */
+    void load(); /* eslint-disable-next-line */
   }, []);
 
   useEffect(() => {

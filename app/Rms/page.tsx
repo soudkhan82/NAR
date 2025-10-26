@@ -1,37 +1,10 @@
 // app/rms/page.tsx
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import {
-  // shared
-  defaultDateRange,
-  fetchRmsBounds,
-  // SSL picklists
-  fetchSubregions,
-  fetchGrids,
-  fetchDistricts,
-  fetchSiteClasses,
-  fetchSiteNames,
-  // data
-  fetchOverview,
-  fetchByVendor,
-  fetchByStatus,
-  fetchByReason,
-  fetchTopSubregions,
-  fetchTopDistricts,
-  fetchByGrid,
-  fetchRows,
-  // types
-  type RmsOverviewRow,
-  type RmsVendorRow,
-  type RmsStatusRow,
-  type RmsReasonRow,
-  type RmsTopSubregionRow,
-  type RmsTopDistrictRow,
-  type RmsGridRow,
-  type RmsTableRow,
-} from "@/app/lib/rpc/rms";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +17,116 @@ import {
   Tooltip,
   Cell,
 } from "recharts";
+
+/* ================= Types that mirror your RPC shapes (relaxed where needed) ================= */
+type RmsOverviewRow = { total_count: number; site_count: number };
+
+type RmsVendorRow = { vendor: string | null; site_count: number };
+type RmsStatusRow = {
+  // Some implementations expose `status`, others `final_status`. Keep both optional.
+  status?: string | null;
+  final_status?: string | null;
+  site_count: number;
+};
+type RmsReasonRow = { reason: string | null; site_count: number };
+
+type RmsTopSubregionRow = { subregion: string | null; site_count: number };
+type RmsTopDistrictRow = { district: string | null; site_count: number };
+type RmsGridRow = { grid: string | null; site_count: number };
+
+type RmsTableRow = {
+  report_date: string | null;
+  site_id: string | null;
+  site_name: string | null;
+  subregion: string | null;
+  grid: string | null;
+  district: string | null;
+  rms_vendor: string | null;
+  final_status: string | null;
+  rms_status_connected_disconnected: string | null;
+  rms_abnormality: string | null;
+  abnormal_reason: string | null;
+  currentrms_type: string | null;
+};
+
+type DateRange = { from: string; to: string };
+
+type Filters = {
+  date_from: string;
+  date_to: string;
+  subregion: string | null;
+  grid: string | null;
+  district: string | null;
+  site_class: string | null;
+  vendor: string | null; // kept for API compatibility (unused picker)
+  status: string | null; // kept for API compatibility (unused picker)
+  search: string;
+};
+
+/* ============== Dynamic RPC loader (no top-level imports) ============== */
+type SiteNamesArgs = {
+  query?: string | null;
+  subregion?: string | null;
+  grid?: string | null;
+  district?: string | null;
+  limit?: number;
+};
+
+type RpcModule = {
+  // shared (note: defaultDateRange may be sync in your module — allow both)
+  defaultDateRange: () => DateRange | Promise<DateRange>;
+  fetchRmsBounds: () => Promise<{
+    min_date: string | null;
+    max_date: string | null;
+  }>;
+  // SSL picklists
+  fetchSubregions: () => Promise<string[]>;
+  fetchGrids: (subregion?: string | null) => Promise<string[]>;
+  fetchDistricts: (
+    subregion?: string | null,
+    grid?: string | null
+  ) => Promise<string[]>;
+  fetchSiteClasses: () => Promise<string[]>;
+  fetchSiteNames: (args: SiteNamesArgs) => Promise<string[]>;
+  // data
+  fetchOverview: (f: Filters) => Promise<RmsOverviewRow>;
+  fetchByVendor: (f: Filters) => Promise<RmsVendorRow[]>;
+  // Use a relaxed param type to accept your module's CommonFilters
+  fetchByStatus: (f: any) => Promise<RmsStatusRow[]>;
+  fetchByReason: (f: Filters) => Promise<RmsReasonRow[]>;
+  fetchTopSubregions: (
+    f: Filters & { limit?: number }
+  ) => Promise<RmsTopSubregionRow[]>;
+  fetchTopDistricts: (
+    f: Filters & { limit?: number }
+  ) => Promise<RmsTopDistrictRow[]>;
+  fetchByGrid: (f: Filters & { limit?: number }) => Promise<RmsGridRow[]>;
+  fetchRows: (
+    f: Filters & { limit?: number; offset?: number }
+  ) => Promise<RmsTableRow[]>;
+};
+
+async function loadRpc(): Promise<RpcModule> {
+  const mod = await import("@/app/lib/rpc/rms");
+  return {
+    defaultDateRange: mod.defaultDateRange as RpcModule["defaultDateRange"],
+    fetchRmsBounds: mod.fetchRmsBounds,
+    fetchSubregions: mod.fetchSubregions,
+    fetchGrids: mod.fetchGrids,
+    fetchDistricts: mod.fetchDistricts,
+    fetchSiteClasses: mod.fetchSiteClasses,
+    fetchSiteNames: mod.fetchSiteNames,
+    fetchOverview: mod.fetchOverview,
+    fetchByVendor: mod.fetchByVendor,
+    // accept CommonFilters by loosening the param type
+    fetchByStatus: mod.fetchByStatus as (f: any) => Promise<RmsStatusRow[]>,
+    fetchByReason: mod.fetchByReason,
+    fetchTopSubregions: mod.fetchTopSubregions,
+    fetchTopDistricts: mod.fetchTopDistricts,
+    fetchByGrid: mod.fetchByGrid,
+    fetchRows: mod.fetchRows,
+  };
+}
 
 /* ========= Single-hue gradient shading ========= */
 const H = 226; // indigo-ish hue
@@ -70,20 +153,21 @@ function shadeByValue(
   return `hsl(${h} ${s}% ${Math.round(l)}%)`;
 }
 
-type Filters = {
-  date_from: string;
-  date_to: string;
-  subregion: string | null;
-  grid: string | null;
-  district: string | null;
-  site_class: string | null;
-  vendor: string | null; // kept for API compatibility (unused picker)
-  status: string | null; // kept for API compatibility (unused picker)
-  search: string;
-};
-
+/* ============================== Page ============================== */
 export default function RMSPage() {
-  const d = defaultDateRange();
+  // local fallback default (wrapped in Promise when used)
+  const localDefault = (): DateRange => {
+    const end = new Date();
+    const start = new Date(Date.now() - 29 * 24 * 3600 * 1000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    return { from: iso(start), to: iso(end) };
+  };
+
+  const rpcRef = useRef<RpcModule | null>(null);
+  const getRpc = async () => {
+    if (!rpcRef.current) rpcRef.current = await loadRpc();
+    return rpcRef.current;
+  };
 
   // bounds
   const [bounds, setBounds] = useState<{
@@ -95,9 +179,10 @@ export default function RMSPage() {
   });
 
   // filters
+  const d0 = localDefault();
   const [filters, setFilters] = useState<Filters>({
-    date_from: d.from,
-    date_to: d.to,
+    date_from: d0.from,
+    date_to: d0.to,
     subregion: null,
     grid: null,
     district: null,
@@ -150,32 +235,43 @@ export default function RMSPage() {
     return { min: Math.min(...vals, 0), max: Math.max(...vals, 1) };
   }, [gridData]);
 
-  // bootstrap
+  /* ------------------------ Bootstrap ------------------------ */
   useEffect(() => {
     (async () => {
+      const rpc = await getRpc();
+
+      // Accept sync or async defaultDateRange using Promise.resolve
+      const dr =
+        (await Promise.resolve(rpc.defaultDateRange()).catch(
+          () => undefined
+        )) ?? localDefault();
+
       const [b, subs, classes] = await Promise.all([
-        fetchRmsBounds(),
-        fetchSubregions(),
-        fetchSiteClasses(),
+        rpc.fetchRmsBounds(),
+        rpc.fetchSubregions(),
+        rpc.fetchSiteClasses(),
       ]);
       setBounds(b);
       setSubregions(subs);
       setSiteClasses(classes);
+      setFilters((f) => ({ ...f, date_from: dr.from, date_to: dr.to }));
 
-      const names = await fetchSiteNames({ limit: 20 });
+      const names = await rpc.fetchSiteNames({ limit: 20 });
       setSiteNames(names);
     })().catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // SubRegion -> refresh grids, clear grid/district, refresh site names
+  /* ------- SubRegion -> refresh grids, clear grid/district, refresh site names ------- */
   useEffect(() => {
     (async () => {
-      const gs = await fetchGrids(filters.subregion);
+      const rpc = await getRpc();
+      const gs = await rpc.fetchGrids(filters.subregion ?? null);
       setGrids(gs);
       setFilters((f) => ({ ...f, grid: null, district: null }));
       setDistricts([]);
 
-      const names = await fetchSiteNames({
+      const names = await rpc.fetchSiteNames({
         query: filters.search || null,
         subregion: filters.subregion,
         grid: null,
@@ -187,14 +283,18 @@ export default function RMSPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.subregion]);
 
-  // Grid -> refresh districts, clear district, refresh site names
+  /* --------------- Grid -> refresh districts, clear district, refresh names --------------- */
   useEffect(() => {
     (async () => {
-      const ds = await fetchDistricts(filters.subregion, filters.grid);
+      const rpc = await getRpc();
+      const ds = await rpc.fetchDistricts(
+        filters.subregion ?? null,
+        filters.grid ?? null
+      );
       setDistricts(ds);
       setFilters((f) => ({ ...f, district: null }));
 
-      const names = await fetchSiteNames({
+      const names = await rpc.fetchSiteNames({
         query: filters.search || null,
         subregion: filters.subregion,
         grid: filters.grid,
@@ -206,10 +306,11 @@ export default function RMSPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.grid]);
 
-  // District -> refresh site names scope
+  /* -------------------------- District -> refresh names -------------------------- */
   useEffect(() => {
     (async () => {
-      const names = await fetchSiteNames({
+      const rpc = await getRpc();
+      const names = await rpc.fetchSiteNames({
         query: filters.search || null,
         subregion: filters.subregion,
         grid: filters.grid,
@@ -221,21 +322,22 @@ export default function RMSPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.district]);
 
-  // load data on filter/paging changes
+  /* -------------------------- Load data on filter/paging changes -------------------------- */
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
+        const rpc = await getRpc();
         const [k, v, s, r, reasons, subs, dists, gridsSeries] =
           await Promise.all([
-            fetchOverview(filters),
-            fetchByVendor(filters),
-            fetchByStatus(filters),
-            fetchRows({ ...filters, limit: 50, offset }),
-            fetchByReason(filters),
-            fetchTopSubregions({ ...filters, limit: 5 }),
-            fetchTopDistricts({ ...filters, limit: 10 }),
-            fetchByGrid({ ...filters, limit: 20 }),
+            rpc.fetchOverview(filters),
+            rpc.fetchByVendor(filters),
+            rpc.fetchByStatus(filters), // relaxed param type
+            rpc.fetchRows({ ...filters, limit: 50, offset }),
+            rpc.fetchByReason(filters),
+            rpc.fetchTopSubregions({ ...filters, limit: 5 }),
+            rpc.fetchTopDistricts({ ...filters, limit: 10 }),
+            rpc.fetchByGrid({ ...filters, limit: 20 }),
           ]);
         setKpi(k);
         setVendorData(v);
@@ -257,21 +359,22 @@ export default function RMSPage() {
     filters.grid,
     filters.district,
     filters.site_class,
-    filters.vendor, // remains null unless you add a picker later
-    filters.status, // remains null unless you add a picker later
+    filters.vendor,
+    filters.status,
     offset,
   ]);
 
   const applySearch = () => {
     setOffset(0);
     setLoading(true);
-    fetchRows({ ...filters, limit: 50, offset: 0 })
+    getRpc()
+      .then((rpc) => rpc.fetchRows({ ...filters, limit: 50, offset: 0 }))
       .then(setRows)
       .finally(() => setLoading(false));
   };
 
   const clearAll = () => {
-    const d2 = defaultDateRange();
+    const d2 = localDefault();
     setFilters({
       date_from: d2.from,
       date_to: d2.to,
@@ -284,14 +387,17 @@ export default function RMSPage() {
       search: "",
     });
     setOffset(0);
-    fetchSiteNames({ limit: 20 }).then(setSiteNames).catch(console.error);
+    getRpc()
+      .then((rpc) => rpc.fetchSiteNames({ limit: 20 }))
+      .then(setSiteNames)
+      .catch(console.error);
   };
 
+  /* ----------------------------------- UI ----------------------------------- */
   return (
     <div className="p-4 md:p-6 space-y-6">
       <div className="flex items-end justify-between">
         <h1 className="text-2xl font-semibold">RMS Dashboard</h1>
-        {/* Tiny caption: Total Records */}
         <div className="text-xs text-gray-500">
           Total records: <span className="font-medium">{kpi.total_count}</span>
         </div>
@@ -430,7 +536,8 @@ export default function RMSPage() {
               onChange={async (e) => {
                 const val = e.target.value;
                 setFilters({ ...filters, search: val });
-                const names = await fetchSiteNames({
+                const rpc = await getRpc();
+                const names = await rpc.fetchSiteNames({
                   query: val || null,
                   subregion: filters.subregion,
                   grid: filters.grid,

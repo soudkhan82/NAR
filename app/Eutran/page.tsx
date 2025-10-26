@@ -1,22 +1,14 @@
+// app/Eutran/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
-import {
-  fetchSubRegions,
-  fetchSummaryWindow,
-  fetchTimeseriesHourlyWindow,
-  fetchTop5GridDailyWindow,
-  fetchTop5DistrictDailyWindow,
-  type FilterState,
-  type SummaryRow,
-  type HourPoint,
-  type GridDaily,
-  type DistrictDaily,
-} from "@/app/lib/rpc/eutranHu";
 import {
   ResponsiveContainer,
   LineChart,
@@ -29,7 +21,54 @@ import {
   Bar,
 } from "recharts";
 
-/* tiny hour tick formatting */
+/* ---------------- Local types (mirror your RPC return shapes) ---------------- */
+type FilterState = { subRegion?: string | null };
+type SummaryRow = {
+  total_cells: number | null;
+  avg_avgdl_tp: number | null;
+  avg_prb_dl: number | null;
+  avg_avgrrc: number | null;
+};
+type HourPoint = {
+  t: string;
+  avgdl_tp?: number | null;
+  prb_dl?: number | null;
+  avgrrc?: number | null;
+};
+type GridDaily = { grid: string; d: string; cells: number };
+type DistrictDaily = { district: string; d: string; cells: number };
+
+/* --------- Dynamic RPC loader (prevents env access during prerender) --------- */
+type RpcModule = {
+  fetchSubRegions: () => Promise<string[]>;
+  fetchSummaryWindow: (f: FilterState, days: number) => Promise<SummaryRow>;
+  fetchTimeseriesHourlyWindow: (
+    f: FilterState,
+    days: number
+  ) => Promise<HourPoint[]>;
+  fetchTop5GridDailyWindow: (
+    f: FilterState,
+    days: number
+  ) => Promise<GridDaily[]>;
+  fetchTop5DistrictDailyWindow: (
+    f: FilterState,
+    days: number
+  ) => Promise<DistrictDaily[]>;
+};
+
+async function loadRpc(): Promise<RpcModule> {
+  // Import only on the client, at runtime
+  const mod = await import("@/app/lib/rpc/eutranHu");
+  return {
+    fetchSubRegions: mod.fetchSubRegions,
+    fetchSummaryWindow: mod.fetchSummaryWindow,
+    fetchTimeseriesHourlyWindow: mod.fetchTimeseriesHourlyWindow,
+    fetchTop5GridDailyWindow: mod.fetchTop5GridDailyWindow,
+    fetchTop5DistrictDailyWindow: mod.fetchTop5DistrictDailyWindow,
+  };
+}
+
+/* ---------------------- Tiny hour tick formatting helper --------------------- */
 function fmtHour(v: string) {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return v;
@@ -59,23 +98,35 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Cache the loaded RPC module so we import only once
+  const rpcRef = useRef<RpcModule | null>(null);
+  const getRpc = async () => {
+    if (!rpcRef.current) rpcRef.current = await loadRpc();
+    return rpcRef.current;
+  };
+
   useEffect(() => {
     (async () => {
       try {
-        setSubRegions(await fetchSubRegions());
-      } catch {}
+        const rpc = await getRpc();
+        setSubRegions(await rpc.fetchSubRegions());
+      } catch {
+        // ignore subregion init error; page still usable
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const load = async (f: FilterState, d: number) => {
+  const loadAll = async (f: FilterState, d: number) => {
     setLoading(true);
     setErr(null);
     try {
+      const rpc = await getRpc();
       const [s, h, g, di] = await Promise.all([
-        fetchSummaryWindow(f, d),
-        fetchTimeseriesHourlyWindow(f, d),
-        fetchTop5GridDailyWindow(f, d),
-        fetchTop5DistrictDailyWindow(f, d),
+        rpc.fetchSummaryWindow(f, d),
+        rpc.fetchTimeseriesHourlyWindow(f, d),
+        rpc.fetchTop5GridDailyWindow(f, d),
+        rpc.fetchTop5DistrictDailyWindow(f, d),
       ]);
       setSummary(s);
       setHourly(h);
@@ -94,18 +145,20 @@ export default function Page() {
   };
 
   useEffect(() => {
-    void load(filters, days);
+    void loadAll(filters, days);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // initial
 
   const onChangeSubRegion = (subRegion: string) => {
     const f = { ...filters, subRegion };
     setFilters(f);
-    void load(f, days);
+    void loadAll(f, days);
   };
+
   const onLoadMore = () => {
     const next = days === 7 ? 14 : days === 14 ? 30 : 30;
     setDays(next);
-    void load(filters, next);
+    void loadAll(filters, next);
   };
 
   // distinct grid / district labels (already top-5 pre-filtered by SQL)
@@ -133,7 +186,7 @@ export default function Page() {
         </div>
         <Button
           variant="outline"
-          onClick={() => void load(filters, days)}
+          onClick={() => void loadAll(filters, days)}
           disabled={loading}
           className="gap-2"
         >
@@ -182,7 +235,7 @@ export default function Page() {
         </div>
       ) : null}
 
-      {/* KPI Cards: all values come from SQL summary */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <KPI
           label={`Distinct EUtranCellFDD (last ${days}d)`}

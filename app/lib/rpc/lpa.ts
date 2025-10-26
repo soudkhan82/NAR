@@ -33,13 +33,26 @@ export type LpaSummary = {
 const toNull = (v?: string): string | null =>
   !v || v === "__ALL__" ? null : v;
 
-/** Safe typed RPC caller */
+/** Safe typed RPC caller (no `any`) */
 type RpcArgs = Record<string, string | number | boolean | null>;
 async function callRpc<T>(fn: string, args: RpcArgs): Promise<T[]> {
   const { data, error } = await supabase.rpc(fn, args);
   if (error) throw new Error(`[${fn}] ${error.message}`);
-  return (data ?? []) as T[];
+  if (!Array.isArray(data)) return [];
+  return data as unknown as T[];
 }
+
+/** Row shapes that some SQL functions may return (kept minimal) */
+type SlabRow = {
+  aging_slab?: string | null;
+  slab?: string | null;
+  cnt?: number | null;
+};
+type NameRow = { name?: string | null; cnt?: number | null };
+type SeverityRow = { severity?: string | null; cnt?: number | null };
+type TimeRow = { day?: string | null; cnt?: number | null };
+type DistrictRow = { district?: string | null; cnt?: number | null };
+type GridRow = { grid?: string | null; cnt?: number | null };
 
 /** Fetch full summary from all LPA RPC functions. */
 export async function fetchLpaSummary(
@@ -51,26 +64,44 @@ export async function fetchLpaSummary(
     p_name: toNull(name),
   };
 
-  const [names, severities, slabsRaw, timesRaw, districts, grids] =
+  const [namesRaw, severitiesRaw, slabsRaw, timesRaw, districtsRaw, gridsRaw] =
     await Promise.all([
-      callRpc<NameCount>("lpa_name_counts", args),
-      callRpc<SeverityCount>("lpa_severity_counts", args),
-      // NOTE: your SQL might return { slab, cnt } or { aging_slab, cnt }.
-      // We normalize to { aging_slab, cnt } here for the charts.
-      callRpc<any>("lpa_aging_slab_counts", args),
-      callRpc<TimePoint>("lpa_timeseries_daily", args),
-      callRpc<DistrictCount>("lpa_district_counts", args),
-      callRpc<GridCount>("lpa_grid_counts", args),
+      callRpc<NameRow>("lpa_name_counts", args),
+      callRpc<SeverityRow>("lpa_severity_counts", args),
+      callRpc<SlabRow>("lpa_aging_slab_counts", args),
+      callRpc<TimeRow>("lpa_timeseries_daily", args),
+      callRpc<DistrictRow>("lpa_district_counts", args),
+      callRpc<GridRow>("lpa_grid_counts", args),
     ]);
 
-  const slabs: AgingSlabCount[] = (slabsRaw ?? []).map((r: any) => ({
-    aging_slab: (r.aging_slab ?? r.slab ?? null) as string | null,
+  const names: NameCount[] = namesRaw.map((r) => ({
+    name: r.name ?? null,
     cnt: Number(r.cnt ?? 0),
   }));
 
-  const times = (timesRaw ?? []).map((d) => ({
-    date: String(d.day),
-    count: Number(d.cnt),
+  const severities: SeverityCount[] = severitiesRaw.map((r) => ({
+    severity: r.severity ?? null,
+    cnt: Number(r.cnt ?? 0),
+  }));
+
+  const slabs: AgingSlabCount[] = slabsRaw.map((r) => ({
+    aging_slab: r.aging_slab ?? r.slab ?? null,
+    cnt: Number(r.cnt ?? 0),
+  }));
+
+  const times = timesRaw.map((d) => ({
+    date: String(d.day ?? ""),
+    count: Number(d.cnt ?? 0),
+  }));
+
+  const districts: DistrictCount[] = districtsRaw.map((r) => ({
+    district: r.district ?? null,
+    cnt: Number(r.cnt ?? 0),
+  }));
+
+  const grids: GridCount[] = gridsRaw.map((r) => ({
+    grid: r.grid ?? null,
+    cnt: Number(r.cnt ?? 0),
   }));
 
   return { names, severities, slabs, times, districts, grids };
@@ -87,7 +118,6 @@ export type LpaFilterOptions = {
 
 /** Helper: get distinct non-null values for a column in LPA_consolidated */
 async function distinctVals(column: string): Promise<string[]> {
-  // Pull column, dedupe in JS (portable + simple)
   const { data, error } = await supabase
     .from("LPA_consolidated")
     .select(column)
@@ -95,18 +125,19 @@ async function distinctVals(column: string): Promise<string[]> {
 
   if (error) throw new Error(`[distinct ${column}] ${error.message}`);
 
-  const vals = Array.from(
-    new Set(
-      (data ?? [])
-        .map((r: Record<string, any>) => r?.[column])
-        .filter(
-          (v: unknown): v is string =>
-            typeof v === "string" && v.trim().length > 0
-        )
-    )
-  );
-  vals.sort((a, b) => a.localeCompare(b));
-  return vals;
+  const out = new Set<string>();
+  if (Array.isArray(data)) {
+    for (const rowUnknown of data as unknown[]) {
+      // narrow each row to an indexable record
+      const row = rowUnknown as Record<string, unknown>;
+      const val = row[column];
+      if (typeof val === "string") {
+        const s = val.trim();
+        if (s) out.add(s);
+      }
+    }
+  }
+  return Array.from(out).sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -117,13 +148,11 @@ async function distinctVals(column: string): Promise<string[]> {
  * - aging_slabs: taken from lpa_aging_slab_counts()
  */
 export async function fetchLpaFilters(): Promise<LpaFilterOptions> {
-  // Regions & Subregions from table columns
   const [regionsArr, subsArr] = await Promise.all([
     distinctVals("Region"),
     distinctVals("SubRegion"),
   ]);
 
-  // Critical column may be boolean or text. Try to read; if error, fallback.
   let criticalArr: string[] = [];
   try {
     criticalArr = await distinctVals("Critical");
@@ -131,19 +160,18 @@ export async function fetchLpaFilters(): Promise<LpaFilterOptions> {
     criticalArr = ["Yes", "No"];
   }
 
-  // Aging slabs list from RPC (robust regardless of SQL alias)
-  const slabsRaw = await callRpc<any>("lpa_aging_slab_counts", {
+  const slabsRaw = await callRpc<SlabRow>("lpa_aging_slab_counts", {
     p_subregion: null,
     p_name: null,
   });
   const slabSet = new Set<string>();
-  for (const r of slabsRaw ?? []) {
-    const label = (r.aging_slab ?? r.slab ?? "").toString().trim();
-    if (label) slabSet.add(label);
+  for (const r of slabsRaw) {
+    const label = r.aging_slab ?? r.slab ?? "";
+    const s = String(label).trim();
+    if (s) slabSet.add(s);
   }
   const agingSlabsArr = Array.from(slabSet).sort((a, b) => a.localeCompare(b));
 
-  // Wrap as { v } objects to match LpaFilterBar expectations
   return {
     regions: regionsArr.map((v) => ({ v })),
     subregions: subsArr.map((v) => ({ v })),

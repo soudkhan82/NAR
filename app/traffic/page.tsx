@@ -1,8 +1,10 @@
 // app/traffic/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import supabase from "@/app/config/supabase-config";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -17,7 +19,7 @@ import {
 /* ----------------------------- Types ----------------------------- */
 
 type TrafficDailyRow = {
-  date: string;          // "YYYY-MM-DD"
+  date: string; // "YYYY-MM-DD"
   voice_erl: number | null;
   total_gb: number | null;
   // (keeping other metrics optional for later extension)
@@ -44,7 +46,7 @@ type LatestDistrictRow = {
 };
 
 type LatestAggRow = {
-  key: string;        // grid or district
+  key: string; // grid or district
   latest_date: string;
   total_gb: number;
   voice_erl: number;
@@ -64,6 +66,23 @@ const nf2 = new Intl.NumberFormat(undefined, {
 const yTickFmt = (v: number) => nf2.format(Number(v));
 const tipFmt = (v: unknown) => nf2.format(Number(v));
 const tipLabelFmt = (label: string) => label;
+
+/* ---------------------- Dynamic Supabase loader ------------------- */
+/** Load the Supabase client lazily on the client only */
+type RpcResult<T> = { data: T | null; error: { message?: string } | null };
+type SupabaseLike = {
+  rpc: (
+    fn: string,
+    args?: Record<string, unknown>
+  ) => Promise<RpcResult<unknown[]>>;
+};
+
+async function loadSupabase(): Promise<SupabaseLike> {
+  // import at runtime only to avoid touching NEXT_PUBLIC_* during prerender
+  const mod = await import("@/app/config/supabase-config");
+  // default export is the client in your setup
+  return mod.default as unknown as SupabaseLike;
+}
 
 /* ------------------------- Helper mappers ------------------------- */
 
@@ -114,7 +133,11 @@ function mapLatestDistrict(arr: unknown[]): LatestAggRow[] {
   return out;
 }
 
-function sortLatest(rows: LatestAggRow[], key: SortKey, dir: SortDir): LatestAggRow[] {
+function sortLatest(
+  rows: LatestAggRow[],
+  key: SortKey,
+  dir: SortDir
+): LatestAggRow[] {
   const s = [...rows].sort((a, b) => {
     const av = a[key];
     const bv = b[key];
@@ -126,9 +149,14 @@ function sortLatest(rows: LatestAggRow[], key: SortKey, dir: SortDir): LatestAgg
 
 /* ------------------- Gradient cell background -------------------- */
 /* Creates a left-to-right gradient proportional to value/max */
-function cellGradientStyle(value: number, max: number, color: "data" | "voice"): React.CSSProperties {
+function cellGradientStyle(
+  value: number,
+  max: number,
+  color: "data" | "voice"
+): React.CSSProperties {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
-  const col = color === "data" ? "rgba(37, 99, 235, 0.18)" : "rgba(22, 163, 74, 0.18)"; // blue / green
+  const col =
+    color === "data" ? "rgba(37, 99, 235, 0.18)" : "rgba(22, 163, 74, 0.18)"; // blue / green
   return {
     background: `linear-gradient(90deg, ${col} ${pct}%, transparent ${pct}%)`,
   };
@@ -152,25 +180,38 @@ export default function TrafficPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [err, setErr] = useState<string | null>(null);
 
+  // cache the loaded client so we import only once
+  const sbRef = useRef<SupabaseLike | null>(null);
+  const getSB = async () => {
+    if (!sbRef.current) sbRef.current = await loadSupabase();
+    return sbRef.current;
+  };
+
   /* ---------- Load SubRegion options via RPC fetch_ssl_subregions() ---------- */
   useEffect(() => {
     (async () => {
       try {
-        const { data, error } = await supabase.rpc("fetch_ssl_subregions");
+        const sb = await getSB();
+        const { data, error } = await sb.rpc("fetch_ssl_subregions");
         if (error) throw error;
         const arr: unknown[] = Array.isArray(data) ? data : [];
         const seen = new Map<string, string>();
         for (const x of arr) {
-          const v = String((x as { subregion?: string | null }).subregion ?? "").trim();
+          const v = String(
+            (x as { subregion?: string | null }).subregion ?? ""
+          ).trim();
           if (!v) continue;
           const k = v.toLowerCase();
           if (!seen.has(k)) seen.set(k, v);
         }
         setSubs(Array.from(seen.values()));
       } catch (e: unknown) {
-        setErr((e as Error)?.message ?? "Failed to load subregions");
+        setErr(
+          (e as { message?: string })?.message ?? "Failed to load subregions"
+        );
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ---- Fetch daily series + latest-by-grid/district whenever SubRegion changes ---- */
@@ -180,15 +221,16 @@ export default function TrafficPage() {
         setLoading(true);
         setErr(null);
         const sub = selectedSub === "__ALL__" ? null : selectedSub;
+        const sb = await getSB();
 
         const [dRes, gRes, diRes] = await Promise.all([
-          supabase.rpc("rpc_traffic_daily", {
+          sb.rpc("rpc_traffic_daily", {
             in_date_from: null,
             in_date_to: null,
             in_subregion: sub,
           }),
-          supabase.rpc("rpc_traffic_latest_by_grid", { in_subregion: sub }),
-          supabase.rpc("rpc_traffic_latest_by_district", { in_subregion: sub }),
+          sb.rpc("rpc_traffic_latest_by_grid", { in_subregion: sub }),
+          sb.rpc("rpc_traffic_latest_by_district", { in_subregion: sub }),
         ]);
 
         if (dRes.error) throw dRes.error;
@@ -203,8 +245,10 @@ export default function TrafficPage() {
         setGridLatest(mapLatestGrid(gArr));
         setDistrictLatest(mapLatestDistrict(diArr));
       } catch (e: unknown) {
-        setErr((e as Error)?.message ?? "Failed to load data");
-        setDaily([]); setGridLatest([]); setDistrictLatest([]);
+        setErr((e as { message?: string })?.message ?? "Failed to load data");
+        setDaily([]);
+        setGridLatest([]);
+        setDistrictLatest([]);
       } finally {
         setLoading(false);
       }
@@ -266,7 +310,9 @@ export default function TrafficPage() {
     <div className="p-4 space-y-4">
       {/* Header + SubRegion select */}
       <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">Network Traffic — Latest Totals & Daily Series</h1>
+        <h1 className="text-xl font-semibold">
+          Network Traffic — Latest Totals & Daily Series
+        </h1>
         <div className="ml-auto flex items-center gap-2">
           <label className="text-sm text-gray-600">SubRegion</label>
           <select
@@ -276,7 +322,9 @@ export default function TrafficPage() {
           >
             <option value="__ALL__">All</option>
             {subs.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>
+                {s}
+              </option>
             ))}
           </select>
         </div>
@@ -294,11 +342,15 @@ export default function TrafficPage() {
           </div>
           <div className="rounded-2xl p-4 shadow-sm border bg-white/60">
             <div className="text-xs text-gray-500 mb-1">Net Average Data</div>
-            <div className="text-2xl font-semibold">{nf2.format(avgDataGB)} GB/day</div>
+            <div className="text-2xl font-semibold">
+              {nf2.format(avgDataGB)} GB/day
+            </div>
           </div>
           <div className="rounded-2xl p-4 shadow-sm border bg-white/60">
             <div className="text-xs text-gray-500 mb-1">Net Average Voice</div>
-            <div className="text-2xl font-semibold">{nf2.format(avgVoiceErl)} Erl/day</div>
+            <div className="text-2xl font-semibold">
+              {nf2.format(avgVoiceErl)} Erl/day
+            </div>
           </div>
         </div>
       )}
@@ -322,7 +374,9 @@ export default function TrafficPage() {
                 </select>
                 <button
                   className="border rounded px-2 py-1"
-                  onClick={() => setDistSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+                  onClick={() =>
+                    setDistSortDir((d) => (d === "desc" ? "asc" : "desc"))
+                  }
                   title="Toggle ASC/DESC"
                 >
                   {distSortDir.toUpperCase()}
@@ -348,14 +402,22 @@ export default function TrafficPage() {
                       <td className="px-4 py-2">{r.latest_date}</td>
                       <td
                         className="px-4 py-2 text-right rounded-sm"
-                        style={cellGradientStyle(r.total_gb, distMax.total_gb, "data")}
+                        style={cellGradientStyle(
+                          r.total_gb,
+                          distMax.total_gb,
+                          "data"
+                        )}
                         title={nf2.format(r.total_gb)}
                       >
                         {nf2.format(r.total_gb)}
                       </td>
                       <td
                         className="px-4 py-2 text-right rounded-sm"
-                        style={cellGradientStyle(r.voice_erl, distMax.voice_erl, "voice")}
+                        style={cellGradientStyle(
+                          r.voice_erl,
+                          distMax.voice_erl,
+                          "voice"
+                        )}
                         title={nf2.format(r.voice_erl)}
                       >
                         {nf2.format(r.voice_erl)}
@@ -364,7 +426,10 @@ export default function TrafficPage() {
                   ))}
                   {districtRows.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
+                      <td
+                        colSpan={5}
+                        className="px-4 py-6 text-center text-gray-500"
+                      >
                         No data
                       </td>
                     </tr>
@@ -390,7 +455,9 @@ export default function TrafficPage() {
                 </select>
                 <button
                   className="border rounded px-2 py-1"
-                  onClick={() => setGridSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+                  onClick={() =>
+                    setGridSortDir((d) => (d === "desc" ? "asc" : "desc"))
+                  }
                   title="Toggle ASC/DESC"
                 >
                   {gridSortDir.toUpperCase()}
@@ -416,14 +483,22 @@ export default function TrafficPage() {
                       <td className="px-4 py-2">{r.latest_date}</td>
                       <td
                         className="px-4 py-2 text-right rounded-sm"
-                        style={cellGradientStyle(r.total_gb, gridMax.total_gb, "data")}
+                        style={cellGradientStyle(
+                          r.total_gb,
+                          gridMax.total_gb,
+                          "data"
+                        )}
                         title={nf2.format(r.total_gb)}
                       >
                         {nf2.format(r.total_gb)}
                       </td>
                       <td
                         className="px-4 py-2 text-right rounded-sm"
-                        style={cellGradientStyle(r.voice_erl, gridMax.voice_erl, "voice")}
+                        style={cellGradientStyle(
+                          r.voice_erl,
+                          gridMax.voice_erl,
+                          "voice"
+                        )}
                         title={nf2.format(r.voice_erl)}
                       >
                         {nf2.format(r.voice_erl)}
@@ -432,7 +507,10 @@ export default function TrafficPage() {
                   ))}
                   {gridRows.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
+                      <td
+                        colSpan={5}
+                        className="px-4 py-6 text-center text-gray-500"
+                      >
                         No data
                       </td>
                     </tr>
@@ -455,20 +533,42 @@ export default function TrafficPage() {
             return (
               <div key={key} className="rounded-2xl border bg-white/60 p-4">
                 <div className="text-sm text-gray-600 mb-2">
-                  {label} {selectedSub !== "__ALL__" ? `— ${selectedSub}` : "— All SubRegions"}
+                  {label}{" "}
+                  {selectedSub !== "__ALL__"
+                    ? `— ${selectedSub}`
+                    : "— All SubRegions"}
                 </div>
                 <div style={{ width: "100%", height: 260 }}>
                   <ResponsiveContainer>
-                    <AreaChart data={series} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                    <AreaChart
+                      data={series}
+                      margin={{ top: 10, right: 20, left: 0, bottom: 10 }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                      <XAxis dataKey="date" type="category" allowDuplicatedCategory={false} tick={{ fontSize: 12 }} />
+                      <XAxis
+                        dataKey="date"
+                        type="category"
+                        allowDuplicatedCategory={false}
+                        tick={{ fontSize: 12 }}
+                      />
                       <YAxis tick={{ fontSize: 12 }} tickFormatter={yTickFmt} />
-                      <Tooltip formatter={(v) => tipFmt(v)} labelFormatter={tipLabelFmt} />
+                      <Tooltip
+                        formatter={(v) => tipFmt(v)}
+                        labelFormatter={tipLabelFmt}
+                      />
                       <Legend />
                       <defs>
                         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={color} stopOpacity={0.55} />
-                          <stop offset="100%" stopColor={color} stopOpacity={0.05} />
+                          <stop
+                            offset="0%"
+                            stopColor={color}
+                            stopOpacity={0.55}
+                          />
+                          <stop
+                            offset="100%"
+                            stopColor={color}
+                            stopOpacity={0.05}
+                          />
                         </linearGradient>
                       </defs>
                       <Area
@@ -492,4 +592,3 @@ export default function TrafficPage() {
     </div>
   );
 }
-  
