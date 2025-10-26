@@ -10,10 +10,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { RegionBucket } from "@/app/lib/rpc/lpa";
+// import type { RegionBucket } from "@/app/lib/rpc/lpa";
 
 // If you already export RegionBucket from your rpc file, replace this with:
 // import type { RegionBucket } from "@/app/lib/rpc/lpa";
+type RegionBucket = { region: string | null; cnt: number };
 
 type Props = {
   data: RegionBucket[]; // [{ region: "South", cnt: 42 }, ...]
