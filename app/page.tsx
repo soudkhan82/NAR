@@ -12,7 +12,7 @@ const TILES = [
     key: "eutran",
     href: "/Eutran",
     title: "EUTRAN",
-    subtitle: "High‑utilization insights",
+    subtitle: "High-utilization insights",
     img: "/images/highU.jpg",
   },
   {
@@ -35,6 +35,14 @@ const TILES = [
     title: "Availability",
     subtitle: "Site uptime & trends",
     img: "/images/avail.jpg",
+  },
+  // NEW: ANOps tile
+  {
+    key: "anops",
+    href: "/ANOps",
+    title: "ANOps",
+    subtitle: "Acceptance & Network Ops",
+    img: "/image/digital.jpg", // from public/image/digital.jpg
   },
   {
     key: "traffic",
