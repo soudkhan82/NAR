@@ -1,11 +1,22 @@
-// app/Eutran/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
+import {
+  fetchSubRegions,
+  fetchSummaryWindow,
+  fetchTimeseriesDailyWindow, // ← daily series
+  fetchTop5GridDailyWindow,
+  fetchTop5DistrictDailyWindow,
+  type FilterState,
+  type SummaryRow,
+  type DayPoint, // ← daily series point
+  type GridDaily,
+  type DistrictDaily,
+} from "@/app/lib/rpc/eutranHu";
 import {
   ResponsiveContainer,
   LineChart,
@@ -18,117 +29,61 @@ import {
   Bar,
 } from "recharts";
 
-/* ---------------- Local types (mirror your RPC return shapes) ---------------- */
-type FilterState = { subRegion?: string | null };
-type SummaryRow = {
-  total_cells: number | null;
-  avg_avgdl_tp: number | null;
-  avg_prb_dl: number | null;
-  avg_avgrrc: number | null;
-};
-type HourPoint = {
-  t: string;
-  avgdl_tp?: number | null;
-  prb_dl?: number | null;
-  avgrrc?: number | null;
-};
-type GridDaily = { grid: string; d: string; cells: number };
-type DistrictDaily = { district: string; d: string; cells: number };
+/* --- tiny helpers (visual only) --- */
 
-/* --------- Dynamic RPC loader (client-only import to avoid SSR pitfalls) ----- */
-type RpcModule = {
-  fetchSubRegions: () => Promise<string[]>;
-  fetchSummaryWindow: (f: FilterState, days: number) => Promise<SummaryRow>;
-  fetchTimeseriesHourlyWindow: (
-    f: FilterState,
-    days: number
-  ) => Promise<HourPoint[]>;
-  fetchTop5GridDailyWindow: (
-    f: FilterState,
-    days: number
-  ) => Promise<GridDaily[]>;
-  fetchTop5DistrictDailyWindow: (
-    f: FilterState,
-    days: number
-  ) => Promise<DistrictDaily[]>;
-};
-
-async function loadRpc(): Promise<RpcModule> {
-  const mod = await import("@/app/lib/rpc/eutranHu");
-  return {
-    fetchSubRegions: mod.fetchSubRegions,
-    fetchSummaryWindow: mod.fetchSummaryWindow,
-    fetchTimeseriesHourlyWindow: mod.fetchTimeseriesHourlyWindow,
-    fetchTop5GridDailyWindow: mod.fetchTop5GridDailyWindow,
-    fetchTop5DistrictDailyWindow: mod.fetchTop5DistrictDailyWindow,
-  };
-}
-
-/* ---------------------- Tiny hour tick formatting helper --------------------- */
-function fmtHour(v: string) {
-  const d = new Date(v);
+function fmtDateTick(v: string) {
+  // expects 'YYYY-MM-DD'
+  const d = new Date(v + "T00:00:00");
   if (Number.isNaN(d.getTime())) return v;
-  return d
-    .toLocaleString(undefined, {
-      month: "short",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-    .replace(", ", " ");
+  return d.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
 }
 
 const palette = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#7c3aed"];
 
+/* --- page --- */
+
 export default function Page() {
-  // Defaults: North-1, 7 days
+  // Default SubRegion = North-1, 7-day window
   const [filters, setFilters] = useState<FilterState>({ subRegion: "North-1" });
   const [days, setDays] = useState<number>(7);
 
   const [subRegions, setSubRegions] = useState<string[]>(["North-1"]);
   const [summary, setSummary] = useState<SummaryRow | null>(null);
-  const [hourly, setHourly] = useState<HourPoint[]>([]);
+  const [dailyTs, setDailyTs] = useState<DayPoint[]>([]);
   const [gridRows, setGridRows] = useState<GridDaily[]>([]);
   const [districtRows, setDistrictRows] = useState<DistrictDaily[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Cache the loaded RPC module so we import only once
-  const rpcRef = useRef<RpcModule | null>(null);
-  const getRpc = async () => (rpcRef.current ??= await loadRpc());
-
   useEffect(() => {
     (async () => {
       try {
-        const rpc = await getRpc();
-        setSubRegions(await rpc.fetchSubRegions());
+        setSubRegions(await fetchSubRegions());
       } catch {
-        /* ignore */
+        /* keep default */
       }
     })();
   }, []);
 
-  const loadAll = async (f: FilterState, d: number) => {
+  const load = async (f: FilterState, d: number) => {
     setLoading(true);
     setErr(null);
     try {
-      const rpc = await getRpc();
-      const [s, h, g, di] = await Promise.all([
-        rpc.fetchSummaryWindow(f, d),
-        rpc.fetchTimeseriesHourlyWindow(f, d),
-        rpc.fetchTop5GridDailyWindow(f, d),
-        rpc.fetchTop5DistrictDailyWindow(f, d),
+      const [s, ts, g, di] = await Promise.all([
+        fetchSummaryWindow(f, d),
+        fetchTimeseriesDailyWindow(f, d),
+        fetchTop5GridDailyWindow(f, d),
+        fetchTop5DistrictDailyWindow(f, d),
       ]);
       setSummary(s);
-      setHourly(h);
+      setDailyTs(ts);
       setGridRows(g);
       setDistrictRows(di);
     } catch (e) {
       console.error("[EUTRAN] load error", e);
       setErr("Failed to load data");
       setSummary(null);
-      setHourly([]);
+      setDailyTs([]);
       setGridRows([]);
       setDistrictRows([]);
     } finally {
@@ -137,22 +92,22 @@ export default function Page() {
   };
 
   useEffect(() => {
-    void loadAll(filters, days);
+    void load(filters, days);
   }, []); // initial
 
   const onChangeSubRegion = (subRegion: string) => {
     const f = { ...filters, subRegion };
     setFilters(f);
-    void loadAll(f, days);
+    void load(f, days);
   };
 
   const onLoadMore = () => {
     const next = days === 7 ? 14 : days === 14 ? 30 : 30;
     setDays(next);
-    void loadAll(filters, next);
+    void load(filters, next);
   };
 
-  // distinct grid / district labels (already top-5 pre-filtered by SQL)
+  // labels for separate bar charts (SQL already restricts to top-5 by latest day)
   const gridLabels = useMemo(
     () => Array.from(new Set(gridRows.map((r) => r.grid))),
     [gridRows]
@@ -168,16 +123,16 @@ export default function Page() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            EUTRAN — KPIs & Distinct Cells (Windowed)
+            EUTRAN — Daily KPIs & Distinct Cells
           </h1>
           <p className="text-sm text-muted-foreground">
-            Default SubRegion: North-1. Windowed 7/14/30 days to keep things
-            fast.
+            Data aggregated by day (date-form). Default SubRegion: North-1.
+            Windowed 7/14/30 days for performance.
           </p>
         </div>
         <Button
           variant="outline"
-          onClick={() => void loadAll(filters, days)}
+          onClick={() => void load(filters, days)}
           disabled={loading}
           className="gap-2"
         >
@@ -226,7 +181,7 @@ export default function Page() {
         </div>
       ) : null}
 
-      {/* KPI Cards */}
+      {/* KPI Cards (values come directly from SQL summary) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <KPI
           label={`Distinct EUtranCellFDD (last ${days}d)`}
@@ -252,23 +207,20 @@ export default function Page() {
         />
       </div>
 
-      {/* Three hourly charts side by side */}
+      {/* Three DAILY KPI line charts (side-by-side) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <ChartCard
-          title={`AvgDL_TP — Hourly (last ${days}d)`}
-          loading={loading}
-        >
-          <SeriesHour data={hourly} yKey="avgdl_tp" />
+        <ChartCard title={`AvgDL_TP — Daily (last ${days}d)`} loading={loading}>
+          <SeriesDay data={dailyTs} yKey="avgdl_tp" />
         </ChartCard>
-        <ChartCard title={`PRB_DL — Hourly (last ${days}d)`} loading={loading}>
-          <SeriesHour data={hourly} yKey="prb_dl" />
+        <ChartCard title={`PRB_DL — Daily (last ${days}d)`} loading={loading}>
+          <SeriesDay data={dailyTs} yKey="prb_dl" />
         </ChartCard>
-        <ChartCard title={`AvgRRC — Hourly (last ${days}d)`} loading={loading}>
-          <SeriesHour data={hourly} yKey="avgrrc" />
+        <ChartCard title={`AvgRRC — Daily (last ${days}d)`} loading={loading}>
+          <SeriesDay data={dailyTs} yKey="avgrrc" />
         </ChartCard>
       </div>
 
-      {/* Separate bar charts — Top-5 Grids */}
+      {/* Separate daily bar charts — Top-5 Grids */}
       <Card className="border-0 shadow-sm">
         <CardContent className="pt-4">
           <h2 className="text-sm font-medium mb-3">
@@ -280,14 +232,16 @@ export default function Page() {
                 key={g}
                 title={`Grid: ${g}`}
                 color={palette[i % palette.length]}
-                data={gridRows.filter((r) => r.grid === g)}
+                data={[...gridRows.filter((r) => r.grid === g)].sort((a, b) =>
+                  a.d < b.d ? -1 : 1
+                )}
               />
             ))}
           </div>
         </CardContent>
       </Card>
 
-      {/* Separate bar charts — Top-5 Districts */}
+      {/* Separate daily bar charts — Top-5 Districts */}
       <Card className="border-0 shadow-sm">
         <CardContent className="pt-4">
           <h2 className="text-sm font-medium mb-3">
@@ -299,7 +253,9 @@ export default function Page() {
                 key={d}
                 title={`District: ${d}`}
                 color={palette[i % palette.length]}
-                data={districtRows.filter((r) => r.district === d)}
+                data={[...districtRows.filter((r) => r.district === d)].sort(
+                  (a, b) => (a.d < b.d ? -1 : 1)
+                )}
               />
             ))}
           </div>
@@ -309,7 +265,7 @@ export default function Page() {
   );
 }
 
-/* --- UI bits (no computations) --- */
+/* --- tiny presentational bits --- */
 
 function KPI({
   label,
@@ -363,11 +319,11 @@ function ChartCard({
   );
 }
 
-function SeriesHour({
+function SeriesDay({
   data,
   yKey,
 }: {
-  data: { t: string }[];
+  data: { d: string }[];
   yKey: "avgdl_tp" | "prb_dl" | "avgrrc";
 }) {
   return (
@@ -377,9 +333,13 @@ function SeriesHour({
           data={data}
           margin={{ left: 8, right: 8, top: 8, bottom: 8 }}
         >
-          <XAxis dataKey="t" tick={{ fontSize: 11 }} tickFormatter={fmtHour} />
+          <XAxis
+            dataKey="d"
+            tick={{ fontSize: 11 }}
+            tickFormatter={fmtDateTick}
+          />
           <YAxis tick={{ fontSize: 11 }} />
-          <Tooltip labelFormatter={(v) => fmtHour(String(v))} />
+          <Tooltip labelFormatter={(v) => fmtDateTick(String(v))} />
           <Legend />
           <Line type="monotone" dataKey={yKey} dot={false} strokeWidth={2} />
         </LineChart>
@@ -404,12 +364,16 @@ function SingleBar({
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
-              data={[...data].sort((a, b) => (a.d < b.d ? -1 : 1))}
+              data={data}
               margin={{ left: 8, right: 8, top: 8, bottom: 8 }}
             >
-              <XAxis dataKey="d" tick={{ fontSize: 11 }} />
+              <XAxis
+                dataKey="d"
+                tick={{ fontSize: 11 }}
+                tickFormatter={fmtDateTick}
+              />
               <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip />
+              <Tooltip labelFormatter={(v) => fmtDateTick(String(v))} />
               <Bar dataKey="cells" fill={color} />
             </BarChart>
           </ResponsiveContainer>

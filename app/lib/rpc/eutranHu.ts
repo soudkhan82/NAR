@@ -11,8 +11,9 @@ export type SummaryRow = {
   total_cells: number;
 };
 
-export type HourPoint = {
-  t: string;
+/* Daily series point (date-form) */
+export type DayPoint = {
+  d: string; // 'YYYY-MM-DD'
   avgdl_tp: number | null;
   prb_dl: number | null;
   avgrrc: number | null;
@@ -55,16 +56,19 @@ export async function fetchSummaryWindow(
   );
 }
 
-export async function fetchTimeseriesHourlyWindow(
+/* DAILY time series */
+export async function fetchTimeseriesDailyWindow(
   f: FilterState,
   days = 7
-): Promise<HourPoint[]> {
-  return rpc<HourPoint[]>("fetch_eutran_timeseries_hourly_window", {
+): Promise<DayPoint[]> {
+  // expects an SQL function like: fetch_eutran_timeseries_daily_window(in_subregion, in_days)
+  return rpc<DayPoint[]>("fetch_eutran_timeseries_daily_window", {
     in_subregion: f.subRegion ?? null,
     in_days: days,
   });
 }
 
+/* Top-5 grids by latest day, per-day distinct cells (already filtered in SQL) */
 export async function fetchTop5GridDailyWindow(
   f: FilterState,
   days = 7
@@ -75,6 +79,7 @@ export async function fetchTop5GridDailyWindow(
   });
 }
 
+/* Top-5 districts by latest day, per-day distinct cells (already filtered in SQL) */
 export async function fetchTop5DistrictDailyWindow(
   f: FilterState,
   days = 7
