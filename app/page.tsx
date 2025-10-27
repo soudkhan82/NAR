@@ -42,14 +42,14 @@ const TILES = [
     href: "/ANOps",
     title: "ANOps",
     subtitle: "Acceptance & Network Ops",
-    img: "/image/digital.jpg", // from public/image/digital.jpg
+    img: "/images/digital.jpg", // from public/image/digital.jpg
   },
   {
     key: "traffic",
     href: "/traffic",
     title: "Traffic",
     subtitle: "Voice & data loads",
-    img: "/images/digital.jpg",
+    img: "/images/traffic.jpg",
   },
   {
     key: "lpa",
