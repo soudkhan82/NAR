@@ -40,7 +40,7 @@ const TILES = [
   {
     key: "anops",
     href: "/ANOps",
-    title: "ANOps",
+    title: "Access Network Operations",
     subtitle: "Acceptance & Network Ops",
     img: "/images/digital.jpg", // from public/image/digital.jpg
   },
