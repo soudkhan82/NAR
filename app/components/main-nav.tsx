@@ -12,12 +12,11 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/ANOps", label: "Access Network" },
   { href: "/Availability", label: "Availability" },
   { href: "/traffic", label: "Traffic" },
-  { href: "/Eutran", label: "EUTRAN" },
+  { href: "/Lpa", label: "LPA" },
+
   { href: "/eas", label: "EAS" },
   { href: "/isp", label: "ISP" },
-
-  { href: "/Lpa", label: "LPA" },
-  // ✅ Added
+  { href: "/Eutran", label: "EUTRAN" },
 ];
 
 export default function MainNav() {
@@ -28,12 +27,6 @@ export default function MainNav() {
     <header className="sticky top-0 z-40 w-full border-b border-white/10 bg-slate-950/70 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6">
         {/* Brand */}
-        <Link
-          href="/"
-          className="text-sm font-semibold tracking-wide text-white"
-        >
-          GeoIntel360
-        </Link>
 
         {/* Desktop nav */}
         <nav className="hidden gap-1 md:flex">
