@@ -90,9 +90,8 @@ export default function HomeLanding() {
             transition={{ duration: 0.6, delay: 0.05 }}
             className="mt-3 max-w-2xl text-slate-300"
           >
-            Explore Cell Utilization, EAS, ISP, Availability, Traffic,RMS ,
-            Geo-Analytics and LPA—each module powered by your Supabase + Next.js
-            stack.
+            Explore Access Network Operations , Cell Utilization, EAS, ISP,
+            Availability, Traffic,RMS and other key performance indicators
           </motion.p>
         </div>
       </section>
