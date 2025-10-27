@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 // ⬇️ add these
-import MainNav from "@/components/main-nav";
-import { SonnerProvider } from "@/components/sonner-provider"; // see below if you don't have it
+import MainNav from "@/app/components/main-nav";
+import { SonnerProvider } from "@/app/components/sonner-provider"; // see below if you don't have it
 
 export const metadata: Metadata = {
   title: "ZTrack",
