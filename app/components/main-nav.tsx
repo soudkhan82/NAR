@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 type NavItem = { href: string; label: string };
 
 const NAV_ITEMS: NavItem[] = [
+  { href: "/GIS/Availability", label: "GIS-Availability" },
   { href: "/", label: "Home" },
   { href: "/ANOps", label: "Access Network" },
   { href: "/Availability", label: "Availability" },

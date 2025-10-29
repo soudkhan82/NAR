@@ -9,12 +9,20 @@ import { useMemo } from "react";
 // Feel free to swap images with your own assets or CDN
 const TILES = [
   {
+    key: "GIS",
+    href: "/GIS/Availability",
+    title: "Geospatial - Availability",
+    subtitle: "Geographical insights",
+    img: "/images/avail.jpg",
+  },
+  {
     key: "eutran",
     href: "/Eutran",
     title: "EUTRAN",
     subtitle: "High-utilization insights",
     img: "/images/highU.jpg",
   },
+
   {
     key: "eas",
     href: "/eas",
