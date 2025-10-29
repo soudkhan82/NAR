@@ -565,8 +565,7 @@ export default function IspTimeseriesPage() {
               </ResponsiveContainer>
             </div>
             <p className="text-[11px] text-gray-500 mt-2">
-              Weekly averages across every calendar week in the selected date
-              range.
+              Weekly peak across every calendar week in the selected date range.
             </p>
           </div>
         </div>

@@ -6,23 +6,25 @@ import maplibregl, {
   Map as MLMap,
   MapMouseEvent,
 } from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+// ❌ REMOVE this line (CSS must be loaded globally)
+// import "maplibre-gl/dist/maplibre-gl.css";
+
 import { memo, useEffect, useMemo, useRef } from "react";
 
 export type MapPointInput = {
   id: string;
   lat: number;
   lon: number;
-  size: number; // pixel radius (we pass 4..24 typically)
+  size: number;
   tooltip?: string;
-  color?: string | undefined; // optional override
+  color?: string | undefined;
 };
 
 type Props = {
   title?: string;
   points: MapPointInput[];
   onPointClick?: (p: { id: string }) => void;
-  styleUrl?: string; // optional custom style
+  styleUrl?: string;
 };
 
 type FeatureProps = {
@@ -37,7 +39,6 @@ function Map({ title, points, onPointClick, styleUrl }: Props) {
   const mapRef = useRef<MLMap | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
 
-  // Build GeoJSON
   const geojson = useMemo<
     GeoJSON.FeatureCollection<GeoJSON.Point, FeatureProps>
   >(
@@ -57,7 +58,6 @@ function Map({ title, points, onPointClick, styleUrl }: Props) {
     [points]
   );
 
-  // Compute bounds
   const bounds = useMemo<LngLatBoundsLike | null>(() => {
     if (points.length === 0) return null;
     const lons = points.map((p) => p.lon);
@@ -79,24 +79,19 @@ function Map({ title, points, onPointClick, styleUrl }: Props) {
     ];
   }, [points]);
 
-  // Create map once
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: styleUrl ?? "https://demotiles.maplibre.org/style.json",
-      center: [70.0, 30.0], // fallback view (Pakistan-ish)
+      center: [70.0, 30.0],
       zoom: 4,
     });
     mapRef.current = map;
 
     map.on("load", () => {
-      map.addSource("sites-src", {
-        type: "geojson",
-        data: geojson,
-      });
-
+      map.addSource("sites-src", { type: "geojson", data: geojson });
       map.addLayer({
         id: "sites-circle",
         type: "circle",
@@ -109,14 +104,9 @@ function Map({ title, points, onPointClick, styleUrl }: Props) {
           "circle-stroke-color": "#111827",
         },
       });
-
-      // Fit bounds initially if we have points
-      if (bounds) {
-        map.fitBounds(bounds, { padding: 40, duration: 0 });
-      }
+      if (bounds) map.fitBounds(bounds, { padding: 40, duration: 0 });
     });
 
-    // Hover popup
     const handleMouseMove = (e: MapMouseEvent) => {
       if (!mapRef.current) return;
       const features = mapRef.current.queryRenderedFeatures(e.point, {
@@ -135,13 +125,12 @@ function Map({ title, points, onPointClick, styleUrl }: Props) {
         number,
         number
       ];
-      if (!popupRef.current) {
+      if (!popupRef.current)
         popupRef.current = new maplibregl.Popup({
           closeButton: false,
           closeOnClick: false,
           offset: 8,
         });
-      }
       popupRef.current
         .setLngLat(coordinates)
         .setHTML(
@@ -154,14 +143,12 @@ function Map({ title, points, onPointClick, styleUrl }: Props) {
         )
         .addTo(mapRef.current);
     };
-
     const handleMouseLeave = () => {
       if (popupRef.current) {
         popupRef.current.remove();
         popupRef.current = null;
       }
     };
-
     const handleClick = (e: MapMouseEvent) => {
       if (!mapRef.current || !onPointClick) return;
       const features = mapRef.current.queryRenderedFeatures(e.point, {
@@ -186,7 +173,6 @@ function Map({ title, points, onPointClick, styleUrl }: Props) {
     };
   }, [bounds, geojson, onPointClick, styleUrl]);
 
-  // Update data when points change
   useEffect(() => {
     const map = mapRef.current;
     const src = map?.getSource("sites-src") as
