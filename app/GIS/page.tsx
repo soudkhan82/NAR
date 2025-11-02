@@ -1,7 +1,11 @@
+// app/GIS/page.tsx
 "use client";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import * as L from "leaflet";
+import type * as Leaflet from "leaflet"; // types only
 import "leaflet/dist/leaflet.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -63,6 +67,19 @@ const containsAll = (hay: string, tokens: string[]) =>
 
 /* ================= Page ================= */
 export default function Page() {
+  // lazy-load Leaflet on client to avoid SSR "window is not defined"
+  const [L, setLeaflet] = useState<typeof Leaflet | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    import("leaflet").then((mod) => {
+      if (!mounted) return;
+      setLeaflet(mod);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // filters
   const [region] = useState<string | null>(null);
   const [subregion, setSubregion] = useState<string | null>(null);
@@ -91,15 +108,15 @@ export default function Page() {
   >([]);
 
   // map
-  const mapRef = useRef<L.Map | null>(null);
+  const mapRef = useRef<Leaflet.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const markersRef = useRef<Record<string, L.Marker>>({});
+  const markersRef = useRef<Record<string, Leaflet.Marker>>({} as any);
 
   /* -------------- picklists (RPCs ONLY) -------------- */
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const subs = await fetchSslSubregions(); // RPC
+      const subs = await fetchSslSubregions();
       if (!mounted) return;
       setSubregions(subs);
       setSubregion(subs.includes("North-1") ? "North-1" : subs[0] ?? null);
@@ -114,7 +131,7 @@ export default function Page() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const g = await fetchSslGrids(subregion ?? null); // RPC
+      const g = await fetchSslGrids(subregion ?? null);
       if (!mounted) return;
       setGrids(g);
       setGrid(null);
@@ -127,7 +144,7 @@ export default function Page() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const d = await fetchSslDistricts(subregion ?? null, grid ?? null); // RPC
+      const d = await fetchSslDistricts(subregion ?? null, grid ?? null);
       if (!mounted) return;
       setDistricts(d);
       setDistrict(null);
@@ -159,9 +176,11 @@ export default function Page() {
     };
   }, [region, subregion, district, grid]);
 
-  /* -------------- map init -------------- */
+  /* -------------- map init (after Leaflet is loaded) -------------- */
   useEffect(() => {
+    if (!L) return; // wait for dynamic import
     if (!mapContainerRef.current || mapRef.current) return;
+
     const m = L.map(mapContainerRef.current, {
       center: [33.6844, 73.0479],
       zoom: 6,
@@ -172,7 +191,12 @@ export default function Page() {
       maxZoom: 19,
     }).addTo(m);
     mapRef.current = m;
-  }, []);
+
+    return () => {
+      m.remove();
+      mapRef.current = null;
+    };
+  }, [L]);
 
   /* -------------- filtered points -------------- */
   const filteredPoints = useMemo(() => {
@@ -200,13 +224,13 @@ export default function Page() {
   const prevSubregionRef = useRef<string | null>(null);
   useEffect(() => {
     const m = mapRef.current;
-    if (!m) return;
+    if (!L || !m) return;
     if (prevSubregionRef.current !== subregion) {
       prevSubregionRef.current = subregion ?? null;
       const c = centroid(filteredPoints);
       m.setView([c.lat, c.lon], Math.max(m.getZoom(), 9));
     }
-  }, [subregion, filteredPoints]);
+  }, [L, subregion, filteredPoints]);
 
   /* -------------- neighbors (top 5 within 5km) -------------- */
   const recomputeNeighbors = useCallback(
@@ -250,23 +274,27 @@ export default function Page() {
   }, [selectedPoint, filteredPoints, recomputeNeighbors]);
 
   /* -------------- zoom + select -------------- */
-  const zoomToPoint = useCallback((row: MapPointEx, minZoom = 15) => {
-    const m = mapRef.current;
-    if (
-      !m ||
-      typeof row.latitude !== "number" ||
-      typeof row.longitude !== "number"
-    )
-      return;
-    const targetZoom = Math.max(m.getZoom(), minZoom);
-    m.flyTo([row.latitude, row.longitude], Math.min(19, targetZoom), {
-      duration: 0.5,
-    });
-    Object.entries(markersRef.current).forEach(([id, mk]) => {
-      if (id === row.site_id) mk.openPopup();
-      else mk.closePopup();
-    });
-  }, []);
+  const zoomToPoint = useCallback(
+    (row: MapPointEx, minZoom = 15) => {
+      const m = mapRef.current;
+      if (
+        !L ||
+        !m ||
+        typeof row.latitude !== "number" ||
+        typeof row.longitude !== "number"
+      )
+        return;
+      const targetZoom = Math.max(m.getZoom(), minZoom);
+      m.flyTo([row.latitude, row.longitude], Math.min(19, targetZoom), {
+        duration: 0.5,
+      });
+      Object.entries(markersRef.current).forEach(([id, mk]) => {
+        if (id === row.site_id) mk.openPopup();
+        else mk.closePopup();
+      });
+    },
+    [L]
+  );
 
   const onRowSelect = useCallback(
     (row: MapPointEx) => {
@@ -276,13 +304,13 @@ export default function Page() {
     [zoomToPoint]
   );
 
-  /* -------------- render markers -------------- */
+  /* -------------- render markers (after Leaflet loaded) -------------- */
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!L || !map) return;
 
     Object.values(markersRef.current).forEach((mk) => mk.remove());
-    markersRef.current = {};
+    markersRef.current = {} as any;
 
     filteredPoints.forEach((p) => {
       if (typeof p.latitude !== "number" || typeof p.longitude !== "number")
@@ -290,7 +318,7 @@ export default function Page() {
 
       const isSel = selectedPoint?.site_id === p.site_id;
       const isNei = neighborIds.has(p.site_id);
-      const color = isSel ? "#2563eb" : isNei ? "#ef4444" : "#ec4899"; // blue / red / gray
+      const color = isSel ? "#2563eb" : isNei ? "#ef4444" : "#ec4899"; // blue / red / pink
 
       const mk = L.marker([p.latitude, p.longitude], {
         icon: L.divIcon({
@@ -331,7 +359,7 @@ export default function Page() {
       const c = centroid(filteredPoints);
       map.setView([c.lat, c.lon], Math.max(map.getZoom(), 8));
     }
-  }, [filteredPoints, selectedPoint, neighborIds, onRowSelect]);
+  }, [L, filteredPoints, selectedPoint, neighborIds, onRowSelect]);
 
   /* -------------- site suggestions -------------- */
   useEffect(() => {
@@ -497,6 +525,11 @@ export default function Page() {
               ref={mapContainerRef}
               className="h-full w-full rounded-xl overflow-hidden z-0"
             />
+            {!L && (
+              <div className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">
+                Loading map…
+              </div>
+            )}
           </CardContent>
         </Card>
 
