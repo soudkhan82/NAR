@@ -10,14 +10,14 @@ import { useMemo } from "react";
 const TILES = [
   {
     key: "GIS",
-    href: "/GIS/Availability",
-    title: "Geospatial - Availability",
+    href: "/GIS/",
+    title: "Geospatial - Analysis",
     subtitle: "Geographical insights",
     img: "/images/avail.jpg",
   },
   {
-    key: "eutran",
-    href: "/Eutran",
+    key: "Cell utilization",
+    href: "/CU",
     title: "EUTRAN",
     subtitle: "High-utilization insights",
     img: "/images/highU.jpg",
@@ -35,7 +35,7 @@ const TILES = [
     href: "/isp",
     title: "ISP",
     subtitle: "Internet service KPIs",
-    img: "/images/traffic.jpg",
+    img: "/images/digital.jpg",
   },
   {
     key: "availability",
@@ -51,6 +51,20 @@ const TILES = [
     title: "Access Network Operations",
     subtitle: "Acceptance & Network Ops",
     img: "/images/digital.jpg", // from public/image/digital.jpg
+  },
+  {
+    key: "Complaints",
+    href: "/complaints",
+    title: "Complaints",
+    subtitle: "Level-3 Engineering Complaints",
+    img: "/images/complaint.avif",
+  },
+  {
+    key: "PS Core",
+    href: "/PSCore",
+    title: "Packet Switched Core",
+    subtitle: "Users & Traffic",
+    img: "/images/pscore.avif",
   },
   {
     key: "traffic",

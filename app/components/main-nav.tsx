@@ -8,16 +8,19 @@ import { motion, AnimatePresence } from "framer-motion";
 type NavItem = { href: string; label: string };
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/GIS/Availability", label: "GIS-Availability" },
   { href: "/", label: "Home" },
   { href: "/ANOps", label: "Access Network" },
   { href: "/Availability", label: "Availability" },
   { href: "/traffic", label: "Traffic" },
   { href: "/Lpa", label: "LPA" },
-
   { href: "/eas", label: "EAS" },
   { href: "/isp", label: "ISP" },
-  { href: "/Eutran", label: "EUTRAN" },
+  { href: "/CU", label: "Cell Utilization" },
+  { href: "/complaints", label: "Complaints" },
+  { href: "/PSCore/Subscribers", label: "PSCore-Subs" },
+  { href: "/PSCore/Traffic", label: "PSCore-Traffic" },
+
+  { href: "/GIS/", label: "GIS" },
 ];
 
 export default function MainNav() {

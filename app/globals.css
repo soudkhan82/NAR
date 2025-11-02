@@ -121,3 +121,10 @@
     @apply bg-background text-foreground;
   }
 }
+.leaflet-container,
+.leaflet-container .leaflet-pane,
+.leaflet-container .leaflet-top,
+.leaflet-container .leaflet-bottom,
+.leaflet-container .leaflet-control-container {
+  z-index: 0 !important;
+}
