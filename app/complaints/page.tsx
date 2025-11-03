@@ -41,8 +41,8 @@ type SiteAggRow = RpcSiteAggRow; // includes Address from updated SQL
 type NeighborRow = RpcNeighborRow; // includes District, Grid, Address
 
 /* ================= Helpers ================= */
-const POPUP_WIDTH = 220; // click-popup width
-const POPUP_MAX_HEIGHT = 260; // click-popup height
+const POPUP_WIDTH = 220;
+const POPUP_MAX_HEIGHT = 260;
 
 const fmtN = (n: number | null | undefined) =>
   typeof n === "number" ? n.toLocaleString() : "—";
@@ -53,6 +53,14 @@ const toBigint = (siteNameText: string): number | null => {
 };
 
 type MarkerRec = { siteName: string; marker: Marker };
+
+/** Color thresholds */
+const complaintsColor = (count: number | null | undefined): string => {
+  const v = typeof count === "number" ? count : 0;
+  if (v > 40) return "rgba(220, 38, 38, 0.9)"; // red
+  if (v >= 20) return "rgba(249, 115, 22, 0.9)"; // orange
+  return "rgba(234, 179, 8, 0.9)"; // yellow
+};
 
 export default function ComplaintsGeoPage() {
   /** Filters */
@@ -81,9 +89,9 @@ export default function ComplaintsGeoPage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const markersRef = useRef<MarkerRec[]>([]);
   const popupRef = useRef<Popup | null>(null); // click popup
-  const hoverPopupRef = useRef<Popup | null>(null); // NEW: hover popup
+  const hoverPopupRef = useRef<Popup | null>(null); // hover popup
 
-  /* ---------------- Map init (OSM raster for roads/places) ---------------- */
+  /* ---------------- Map init (Dark raster for roads/places) ---------------- */
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return;
 
@@ -97,33 +105,40 @@ export default function ComplaintsGeoPage() {
     const map = new maplibregl.Map({
       container: containerRef.current,
       style,
-      center: [67.0011, 24.8607], // initial center (PK)
+      center: [67.0011, 24.8607],
       zoom: 4.8,
     });
 
+    // Zoom +/- controls
+    map.addControl(
+      new maplibregl.NavigationControl({ showCompass: false }),
+      "top-right"
+    );
+
     map.on("load", () => {
-      const osmSource: RasterSourceSpecification = {
+      // Carto Dark Matter tiles
+      const darkSource: RasterSourceSpecification = {
         type: "raster",
         tiles: [
-          "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          "https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png",
+          "https://cartodb-basemaps-b.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png",
+          "https://cartodb-basemaps-c.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png",
+          "https://cartodb-basemaps-d.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png",
         ],
         tileSize: 256,
-        attribution:
-          '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        attribution: "© OpenStreetMap contributors © CARTO",
       };
-      map.addSource("osm", osmSource);
+      map.addSource("dark", darkSource);
 
-      const osmLayer: RasterLayerSpecification = {
-        id: "osm-raster",
+      const darkLayer: RasterLayerSpecification = {
+        id: "dark-raster",
         type: "raster",
-        source: "osm",
+        source: "dark",
       };
-      map.addLayer(osmLayer);
+      map.addLayer(darkLayer);
     });
 
-    // Clean up any hover popup while panning/zooming
+    // Remove hover popup while panning/zooming
     map.on("movestart", () => {
       hoverPopupRef.current?.remove();
       hoverPopupRef.current = null;
@@ -207,7 +222,7 @@ export default function ComplaintsGeoPage() {
     };
   }, [region, subRegion, district]);
 
-  /* ---------------- Build markers (with HOVER POPUP) ---------------- */
+  /* ---------------- Build markers (hover+click, threshold colors) ---------------- */
   const rebuildMarkers = useCallback((rows: SiteAggRow[]) => {
     // clear old
     markersRef.current.forEach((m) => m.marker.remove());
@@ -232,7 +247,9 @@ export default function ComplaintsGeoPage() {
       el.style.width = `${px}px`;
       el.style.height = `${px}px`;
       el.style.borderRadius = "9999px";
-      el.style.background = "rgba(0,0,0,0.6)"; // default
+      const baseCol = complaintsColor(r.complaints_count);
+      el.style.background = baseCol;
+      (el as any).dataset.baseColor = baseCol;
       el.style.border = "2px solid #fff";
       el.style.cursor = "pointer";
       el.title = `${r.SiteName} • ${fmtN(r.complaints_count)} complaints`;
@@ -241,11 +258,9 @@ export default function ComplaintsGeoPage() {
         .setLngLat([r.Longitude, r.Latitude])
         .addTo(mapRef.current as MLMap);
 
-      // --- NEW: Hover popup (tooltip-like) ---
+      // Hover popup
       const onEnter = () => {
-        // remove any previous hover popup
         hoverPopupRef.current?.remove();
-
         const html = `
           <div style="font-size:12px; line-height:1.25">
             <div><strong>Site:</strong> ${r.SiteName}</div>
@@ -262,24 +277,21 @@ export default function ComplaintsGeoPage() {
           .setLngLat([r.Longitude as number, r.Latitude as number])
           .setHTML(html)
           .addTo(mapRef.current as MLMap);
-
         hoverPopupRef.current = p;
       };
-
       const onLeave = () => {
         hoverPopupRef.current?.remove();
         hoverPopupRef.current = null;
       };
-
       el.addEventListener("mouseenter", onEnter);
       el.addEventListener("mouseleave", onLeave);
 
-      // Keep existing click behavior (opens detailed popup + neighbors)
+      // Click details
       el.addEventListener("click", () => void handleSelectSite(r));
 
       markersRef.current.push({ siteName: r.SiteName, marker });
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ---------------- Load sites + centroid zoom ---------------- */
   const loadSites = useCallback(async () => {
@@ -292,11 +304,9 @@ export default function ComplaintsGeoPage() {
         limit: 1000,
       });
 
-      // sort descending by complaints (defensive)
       rows.sort(
         (a, b) => (b.complaints_count ?? 0) - (a.complaints_count ?? 0)
       );
-
       setSites(rows);
 
       if (mapRef.current && rows.length) {
@@ -327,17 +337,19 @@ export default function ComplaintsGeoPage() {
     void loadSites();
   }, [loadSites]);
 
-  /* ---------------- Selection: details, colorize, popup, zoom ---------------- */
+  /* ---------------- Selection: recolor, popup, zoom ---------------- */
   const colorizeMarkers = useCallback(
     (selectedName: string, neighborNames: Set<string>) => {
       markersRef.current.forEach((rec) => {
-        const el = rec.marker.getElement() as HTMLDivElement;
+        const el = rec.marker.getElement() as HTMLDivElement & {
+          dataset: { baseColor?: string };
+        };
         if (rec.siteName === selectedName) {
-          el.style.background = "rgba(37, 99, 235, 0.9)"; // blue
+          el.style.background = "rgba(37, 99, 235, 0.9)"; // blue selected
         } else if (neighborNames.has(rec.siteName)) {
-          el.style.background = "rgba(220, 38, 38, 0.9)"; // red
+          el.style.background = "rgba(220, 38, 38, 0.9)"; // red neighbors
         } else {
-          el.style.background = "rgba(0,0,0,0.6)";
+          el.style.background = el.dataset.baseColor ?? "rgba(0,0,0,0.6)";
         }
       });
     },
@@ -364,10 +376,7 @@ export default function ComplaintsGeoPage() {
             [Math.min(...lons), Math.min(...lats)],
             [Math.max(...lons), Math.max(...lats)],
           ],
-          {
-            padding: 60,
-            duration: 500,
-          }
+          { padding: 60, duration: 500 }
         );
       } else {
         mapRef.current.easeTo({ center: coords[0], zoom: 12, duration: 500 });
@@ -378,7 +387,6 @@ export default function ComplaintsGeoPage() {
 
   const renderPopupContent = useCallback(async (site: SiteAggRow) => {
     const id = `site-${site.SiteName}`;
-    // make container with full metadata + chart + badges
     const wrap = document.createElement("div");
     wrap.style.width = `${POPUP_WIDTH}px`;
     wrap.style.maxHeight = `${POPUP_MAX_HEIGHT}px`;
@@ -411,7 +419,6 @@ export default function ComplaintsGeoPage() {
       tsData: TsRow[],
       badgesData: ServiceBadgeRow[]
     ) => {
-      // render chart via react-dom/client into popup island
       const { createRoot } = await import("react-dom/client");
       const chartHost = document.getElementById(chartId);
       if (chartHost) {
@@ -450,10 +457,8 @@ export default function ComplaintsGeoPage() {
       setSelectedSite(site);
       const idBig = toBigint(site.SiteName);
 
-      // reset neighbors table (repopulates post-fetch)
       setNeighbors([]);
 
-      // fetch details
       let tsData: TsRow[] = [];
       let badgesData: ServiceBadgeRow[] = [];
       let nbData: NeighborRow[] = [];
@@ -469,17 +474,14 @@ export default function ComplaintsGeoPage() {
       setBadges(badgesData);
       setNeighbors(nbData);
 
-      // recolor markers
       colorizeMarkers(
         site.SiteName,
         new Set(nbData.map((n) => n.NeighborSiteName))
       );
 
-      // Close hover tooltip when opening click popup
       hoverPopupRef.current?.remove();
       hoverPopupRef.current = null;
 
-      // popup
       if (
         mapRef.current &&
         typeof site.Longitude === "number" &&
@@ -491,11 +493,9 @@ export default function ComplaintsGeoPage() {
           .setLngLat([site.Longitude, site.Latitude])
           .setDOMContent(wrap)
           .addTo(mapRef.current);
-        // mount chart + badges
         void mountChartAndBadges(chartId, badgesId, tsData, badgesData);
       }
 
-      // zoom
       fitToSelectedAndNeighbors(site, nbData);
     },
     [
@@ -507,9 +507,9 @@ export default function ComplaintsGeoPage() {
   );
 
   /* ---------------- Tables (scroll 10 rows) ---------------- */
-  const rowH = 44; // px per row
+  const rowH = 44;
   const visibleRows = 10;
-  const bodyMaxH = rowH * visibleRows; // ~10 visible rows
+  const bodyMaxH = rowH * visibleRows;
   const selectedName = selectedSite?.SiteName ?? null;
 
   const onRowClick = (r: SiteAggRow) => void handleSelectSite(r);
@@ -521,7 +521,6 @@ export default function ComplaintsGeoPage() {
 
       {/* Filters */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        {/* Region */}
         <label className="flex flex-col text-sm">
           <span className="mb-1">Region</span>
           <select
@@ -537,7 +536,6 @@ export default function ComplaintsGeoPage() {
           </select>
         </label>
 
-        {/* SubRegion */}
         <label className="flex flex-col text-sm">
           <span className="mb-1">SubRegion</span>
           <select
@@ -554,7 +552,6 @@ export default function ComplaintsGeoPage() {
           </select>
         </label>
 
-        {/* District */}
         <label className="flex flex-col text-sm">
           <span className="mb-1">District</span>
           <select
@@ -571,7 +568,6 @@ export default function ComplaintsGeoPage() {
           </select>
         </label>
 
-        {/* Grid */}
         <label className="flex flex-col text-sm">
           <span className="mb-1">Grid</span>
           <select
@@ -599,10 +595,11 @@ export default function ComplaintsGeoPage() {
         </div>
       </div>
 
-      {/* Map */}
+      {/* Map (dark background behind tiles to avoid flashes) */}
       <div
         ref={containerRef}
         className="h-[430px] rounded-xl overflow-hidden border"
+        style={{ backgroundColor: "#0f172a" }} // slate-900
       />
 
       {/* Tables */}
