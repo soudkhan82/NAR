@@ -37,12 +37,13 @@ import {
 } from "recharts";
 
 /* ================= Types (aligned with RPC outputs) ================= */
-type SiteAggRow = RpcSiteAggRow; // includes Address from updated SQL
-type NeighborRow = RpcNeighborRow; // includes District, Grid, Address
+type SiteAggRow = RpcSiteAggRow;
+type NeighborRow = RpcNeighborRow;
 
 /* ================= Helpers ================= */
-const POPUP_WIDTH = 220;
-const POPUP_MAX_HEIGHT = 260;
+const POPUP_WIDTH = 380; // click-popup width
+const POPUP_MAX_HEIGHT = 420; // click-popup max height
+const CHART_HEIGHT = 200;
 
 const fmtN = (n: number | null | undefined) =>
   typeof n === "number" ? n.toLocaleString() : "—";
@@ -54,7 +55,7 @@ const toBigint = (siteNameText: string): number | null => {
 
 type MarkerRec = { siteName: string; marker: Marker };
 
-/** Color thresholds */
+/** Threshold colors */
 const complaintsColor = (count: number | null | undefined): string => {
   const v = typeof count === "number" ? count : 0;
   if (v > 40) return "rgba(220, 38, 38, 0.9)"; // red
@@ -91,7 +92,7 @@ export default function ComplaintsGeoPage() {
   const popupRef = useRef<Popup | null>(null); // click popup
   const hoverPopupRef = useRef<Popup | null>(null); // hover popup
 
-  /* ---------------- Map init (Dark raster for roads/places) ---------------- */
+  /* ---------------- Map init (Dark basemap + zoom controls) ---------------- */
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return;
 
@@ -258,7 +259,7 @@ export default function ComplaintsGeoPage() {
         .setLngLat([r.Longitude, r.Latitude])
         .addTo(mapRef.current as MLMap);
 
-      // Hover popup
+      // Hover popup (aligned to RIGHT of point)
       const onEnter = () => {
         hoverPopupRef.current?.remove();
         const html = `
@@ -272,11 +273,15 @@ export default function ComplaintsGeoPage() {
         const p = new maplibregl.Popup({
           closeButton: false,
           closeOnClick: false,
-          offset: 12,
+          anchor: "left", // popup appears on the RIGHT side
+          offset: [12, 0], // push a bit further right
+          maxWidth: `${POPUP_WIDTH}px`,
         })
           .setLngLat([r.Longitude as number, r.Latitude as number])
           .setHTML(html)
           .addTo(mapRef.current as MLMap);
+
+        p.getElement().style.zIndex = "60"; // above tables
         hoverPopupRef.current = p;
       };
       const onLeave = () => {
@@ -394,8 +399,8 @@ export default function ComplaintsGeoPage() {
     wrap.style.overflowX = "hidden";
     wrap.innerHTML = `
       <div style="font-size:12px; line-height:1.25">
-        <div style="margin-bottom:6px">
-          <div style="font-weight:600; font-size:13px">${site.SiteName}</div>
+        <div style="margin-bottom:8px">
+          <div style="font-weight:600; font-size:14px">${site.SiteName}</div>
           <div><strong>Region:</strong> ${site.Region ?? "—"}</div>
           <div><strong>SubRegion:</strong> ${site.SubRegion ?? "—"}</div>
           <div><strong>District:</strong> ${site.District ?? "—"}</div>
@@ -405,8 +410,8 @@ export default function ComplaintsGeoPage() {
             site.complaints_count
           )}</div>
         </div>
-        <div id="${id}-chart" style="height:170px;"></div>
-        <div id="${id}-badges" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:6px;"></div>
+        <div id="${id}-chart" style="height:${CHART_HEIGHT}px;"></div>
+        <div id="${id}-badges" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
       </div>
     `;
     return { wrap, chartId: `${id}-chart`, badgesId: `${id}-badges` };
@@ -424,7 +429,7 @@ export default function ComplaintsGeoPage() {
       if (chartHost) {
         const root = createRoot(chartHost);
         root.render(
-          <ResponsiveContainer width="100%" height={160}>
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
             <LineChart data={tsData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="d" tick={{ fontSize: 10 }} />
@@ -482,6 +487,7 @@ export default function ComplaintsGeoPage() {
       hoverPopupRef.current?.remove();
       hoverPopupRef.current = null;
 
+      // Click popup anchored to RIGHT of the point
       if (
         mapRef.current &&
         typeof site.Longitude === "number" &&
@@ -489,10 +495,19 @@ export default function ComplaintsGeoPage() {
       ) {
         popupRef.current?.remove();
         const { wrap, chartId, badgesId } = await renderPopupContent(site);
-        popupRef.current = new maplibregl.Popup({ closeButton: true })
+        popupRef.current = new maplibregl.Popup({
+          closeButton: true,
+          anchor: "left", // popup appears on the RIGHT side
+          offset: [14, 0], // extra horizontal space
+          maxWidth: `${POPUP_WIDTH + 40}px`, // avoid default 240px clamp
+        })
           .setLngLat([site.Longitude, site.Latitude])
           .setDOMContent(wrap)
           .addTo(mapRef.current);
+
+        // Keep above tables
+        popupRef.current.getElement().style.zIndex = "60";
+
         void mountChartAndBadges(chartId, badgesId, tsData, badgesData);
       }
 
@@ -517,6 +532,13 @@ export default function ComplaintsGeoPage() {
   /* ---------------- Render ---------------- */
   return (
     <div className="p-4 space-y-4">
+      {/* Raise popups above surrounding layout */}
+      <style jsx global>{`
+        .maplibregl-popup {
+          z-index: 60 !important;
+        }
+      `}</style>
+
       <h1 className="text-xl font-semibold">Complaints Geo Dashboard</h1>
 
       {/* Filters */}
@@ -595,10 +617,10 @@ export default function ComplaintsGeoPage() {
         </div>
       </div>
 
-      {/* Map */}
+      {/* Map (no clipping: overflow-visible; ensure stacking context: relative) */}
       <div
         ref={containerRef}
-        className="h-[430px] rounded-xl overflow-hidden border"
+        className="relative h-[430px] rounded-xl border overflow-visible"
         style={{ backgroundColor: "#0f172a" }}
       />
 
