@@ -595,11 +595,11 @@ export default function ComplaintsGeoPage() {
         </div>
       </div>
 
-      {/* Map (dark background behind tiles to avoid flashes) */}
+      {/* Map */}
       <div
         ref={containerRef}
         className="h-[430px] rounded-xl overflow-hidden border"
-        style={{ backgroundColor: "#0f172a" }} // slate-900
+        style={{ backgroundColor: "#0f172a" }}
       />
 
       {/* Tables */}
@@ -607,7 +607,7 @@ export default function ComplaintsGeoPage() {
         {/* Sites Table */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
           <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
-            Sites (Top 1000 by Complaints)
+            {`Sites (${sites.length.toLocaleString()} records)`}
           </div>
           <div className="overflow-auto" style={{ maxHeight: bodyMaxH }}>
             <table className="min-w-full text-sm">
@@ -651,7 +651,7 @@ export default function ComplaintsGeoPage() {
         {/* Neighbors Table */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
           <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
-            Neighbors (≤ 5 km)
+            {`Neighbors (≤ 5 km — ${neighbors.length.toLocaleString()} records)`}
           </div>
           <div className="overflow-auto" style={{ maxHeight: bodyMaxH }}>
             <table className="min-w-full text-sm">
