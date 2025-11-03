@@ -18,7 +18,7 @@ import {
 /* ---------------- Local types (mirror RPC return shapes) ---------------- */
 type IspSeriesPoint = {
   date: string; // ISO yyyy-mm-dd
-  [k: string]: string | number; // dynamic numeric keys (Ping_ms, DL_Mbps, etc.)
+  [k: string]: string | number; // dynamic numeric metric keys
 };
 
 type IspTimeseries = {
@@ -70,20 +70,6 @@ const tooltipFormatter = (
   return [out, name];
 };
 
-// ISO week label like 2025-W43
-function isoWeekKey(dateStr: string): string {
-  const d = new Date(dateStr);
-  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = (t.getUTCDay() + 6) % 7; // Mon=0..Sun=6
-  t.setUTCDate(t.getUTCDate() - day + 3);
-  const firstThu = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
-  const firstThuDay = (firstThu.getUTCDay() + 6) % 7;
-  firstThu.setUTCDate(firstThu.getUTCDate() - firstThuDay + 3);
-  const week = 1 + Math.round((+t - +firstThu) / (7 * 24 * 3600 * 1000));
-  const year = t.getUTCFullYear();
-  return `${year}-W${String(week).padStart(2, "0")}`;
-}
-
 function weekStartUTC(d: Date): Date {
   const t = new Date(
     Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
@@ -93,6 +79,19 @@ function weekStartUTC(d: Date): Date {
   return t;
 }
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
+
+function isoWeekKey(dateStr: string): string {
+  const d = new Date(dateStr);
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = (t.getUTCDay() + 6) % 7;
+  t.setUTCDate(t.getUTCDate() - day + 3);
+  const firstThu = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
+  const firstThuDay = (firstThu.getUTCDay() + 6) % 7;
+  firstThu.setUTCDate(firstThu.getUTCDate() - firstThuDay + 3);
+  const week = 1 + Math.round((+t - +firstThu) / (7 * 24 * 3600 * 1000));
+  const year = t.getUTCFullYear();
+  return `${year}-W${String(week).padStart(2, "0")}`;
+}
 
 function buildWeeklyAvgTrendInRange(
   series: IspSeriesPoint[],
@@ -153,7 +152,11 @@ export default function IspTimeseriesPage() {
 
   const [ts, setTs] = useState<IspTimeseries | null>(null);
   const [sum, setSum] = useState<IspNumericSummary | null>(null);
+
+  // Which metrics are drawn on the line chart
   const [selected, setSelected] = useState<string[]>([]);
+  // Which single metric drives the weekly bar chart
+  const [metricKey, setMetricKey] = useState<string | null>(null);
 
   type ChartMousePos = { x: number; y: number } | null;
   const [mousePosLine, setMousePosLine] = useState<ChartMousePos>(null);
@@ -190,7 +193,6 @@ export default function IspTimeseriesPage() {
     return PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length];
   };
 
-  // Make load accept overrides, so quick actions fetch with fresh values immediately
   const load = async (opts?: { dateFrom?: string; dateTo?: string }) => {
     const effectiveFrom = opts?.dateFrom ?? (dateFrom || undefined);
     const effectiveTo = opts?.dateTo ?? (dateTo || undefined);
@@ -217,10 +219,16 @@ export default function IspTimeseriesPage() {
 
       if (firstLoadRef.current) {
         setSelected(seriesRes.numericKeys);
+        setMetricKey(seriesRes.numericKeys[0] ?? null);
         firstLoadRef.current = false;
       } else {
         setSelected((prev) =>
           prev.filter((k) => seriesRes.numericKeys.includes(k))
+        );
+        setMetricKey((prev) =>
+          prev && seriesRes.numericKeys.includes(prev)
+            ? prev
+            : seriesRes.numericKeys[0] ?? null
         );
       }
     } catch (e: unknown) {
@@ -234,7 +242,7 @@ export default function IspTimeseriesPage() {
     }
   };
 
-  // Set last 30 days on mount, then fetch with those exact values
+  // initial: last 30 days
   useEffect(() => {
     setDateFrom(last30From);
     setDateTo(todayYmd);
@@ -256,46 +264,77 @@ export default function IspTimeseriesPage() {
   const handleSelectAll = () => ts && setSelected(ts.numericKeys);
   const handleClearAll = () => setSelected([]);
 
-  const rangeAvgByKey = useMemo<Record<string, number>>(() => {
-    if (!sum) return {};
-    const m: Record<string, number> = {};
-    for (const k of sum.numericKeys) m[k] = sum.avgs[k] ?? 0;
-    return m;
+  /* ---------------- Derived stats ---------------- */
+
+  // Average values for table
+  const tableRows = useMemo(() => {
+    if (!sum) return [] as Array<{ key: string; avg: number }>;
+    const rows = sum.numericKeys.map((k) => ({
+      key: k,
+      avg: sum.avgs[k] ?? 0,
+    }));
+    rows.sort((a, b) => b.avg - a.avg);
+    return rows;
   }, [sum]);
 
-  const primaryMetric = useMemo(
-    () => (ts ? selected[0] || ts.numericKeys[0] || null : null),
-    [ts, selected]
+  const maxAvgForBar = useMemo(
+    () => (tableRows.length ? Math.max(...tableRows.map((r) => r.avg)) : 0),
+    [tableRows]
   );
 
+  // Peak (max) values for cards — computed directly from the series inside the chosen range
+  const rangeMaxByKey = useMemo<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    if (!ts?.series?.length) return out;
+
+    const start = (dateFrom || ts.series[0]?.date || "") as string;
+    const end = (dateTo ||
+      ts.series[ts.series.length - 1]?.date ||
+      "") as string;
+
+    const startMs = start
+      ? Date.parse(start + "T00:00:00Z")
+      : Number.NEGATIVE_INFINITY;
+    const endMs = end
+      ? Date.parse(end + "T23:59:59Z")
+      : Number.POSITIVE_INFINITY;
+
+    for (const key of ts.numericKeys) out[key] = Number.NEGATIVE_INFINITY;
+
+    for (const row of ts.series) {
+      const t = Date.parse(String(row.date) + "T12:00:00Z");
+      if (Number.isNaN(t) || t < startMs || t > endMs) continue;
+
+      for (const key of ts.numericKeys) {
+        const v = row[key];
+        if (typeof v === "number" && Number.isFinite(v)) {
+          if (v > out[key]) out[key] = v;
+        }
+      }
+    }
+
+    for (const key of ts.numericKeys) {
+      if (!Number.isFinite(out[key])) out[key] = 0;
+    }
+    return out;
+  }, [ts?.series, ts?.numericKeys, dateFrom, dateTo]);
+
+  // Weekly bar data: average per calendar week for the chosen metric
   const weeklyBarData = useMemo(() => {
-    if (!ts || !primaryMetric) return [];
+    if (!ts || !metricKey) return [];
     const rangeStart = (dateFrom || ts.series[0]?.date || "") as string;
     const rangeEnd = (dateTo ||
       ts.series[ts.series.length - 1]?.date ||
       "") as string;
     return buildWeeklyAvgTrendInRange(
       ts.series,
-      primaryMetric,
+      metricKey,
       rangeStart,
       rangeEnd
     );
-  }, [ts?.series, ts?.numericKeys, primaryMetric, dateFrom, dateTo]);
+  }, [ts?.series, ts?.numericKeys, metricKey, dateFrom, dateTo]);
 
-  const tableRows = useMemo(() => {
-    if (!sum) return [] as Array<{ key: string; value: number }>;
-    const rows = sum.numericKeys.map((k) => ({
-      key: k,
-      value: sum.sums[k] ?? 0,
-    }));
-    rows.sort((a, b) => b.value - a.value);
-    return rows;
-  }, [sum]);
-
-  const maxValue = useMemo(
-    () => (tableRows.length ? Math.max(...tableRows.map((r) => r.value)) : 0),
-    [tableRows]
-  );
+  /* ---------------- UI ---------------- */
 
   return (
     <div className="p-6 space-y-6 bg-gradient-to-b from-gray-50 to-white min-h-screen">
@@ -356,7 +395,29 @@ export default function IspTimeseriesPage() {
         </div>
       </div>
 
-      {/* Metric toggles (pills show Avg over selected range) */}
+      {/* Cards — Peak values per metric */}
+      {ts && (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {ts.numericKeys.map((k) => {
+            const peak = rangeMaxByKey[k] ?? 0;
+            return (
+              <div
+                key={k}
+                className="rounded-2xl border bg-white shadow-sm p-4 flex flex-col gap-2"
+              >
+                <div className="text-xs text-gray-500">Metric</div>
+                <div className="text-sm font-medium">{k}</div>
+                <div className="mt-2 text-[11px] text-gray-600">
+                  Peak (range)
+                </div>
+                <div className="text-2xl font-semibold">{fmt(peak, 3)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Metric toggles for Line chart */}
       <div className="rounded-2xl border bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 flex-wrap mb-3">
           <button
@@ -380,7 +441,6 @@ export default function IspTimeseriesPage() {
           {ts?.numericKeys.map((k) => {
             const color = colorFor(k);
             const checked = selected.includes(k);
-            const avg = rangeAvgByKey[k] ?? 0;
             return (
               <label
                 key={k}
@@ -400,15 +460,10 @@ export default function IspTimeseriesPage() {
                   </span>
                 </span>
 
-                <span className="inline-flex items-center gap-2">
-                  <span
-                    className="inline-block h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className="text-[11px] text-gray-600">
-                    Avg (range): <span className="font-medium">{fmt(avg)}</span>
-                  </span>
-                </span>
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: color }}
+                />
               </label>
             );
           })}
@@ -476,25 +531,27 @@ export default function IspTimeseriesPage() {
         </div>
       </div>
 
-      {/* Value table + Weekly bar chart */}
+      {/* Table (averages) + Weekly bar (average) */}
       {sum && (
         <div className="grid lg:grid-cols-2 gap-4">
           <div className="rounded-2xl border bg-white shadow-sm p-3">
             <div className="text-sm text-gray-700 mb-2">
-              Values over selected range
+              Average values over selected range
             </div>
             <div className="max-h-[340px] overflow-auto rounded-xl border">
               <table className="min-w-[520px] w-full text-xs">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="text-left p-2 border">Metric</th>
-                    <th className="text-right p-2 border">Value</th>
+                    <th className="text-right p-2 border">Average</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tableRows.map(({ key, value }) => {
+                  {tableRows.map(({ key, avg }) => {
                     const pct =
-                      maxValue > 0 ? Math.max(2, (value / maxValue) * 100) : 0;
+                      maxAvgForBar > 0
+                        ? Math.max(2, (avg / maxAvgForBar) * 100)
+                        : 0;
                     return (
                       <tr key={key} className="odd:bg-white even:bg-gray-50">
                         <td className="p-2 border font-medium">{key}</td>
@@ -509,7 +566,7 @@ export default function IspTimeseriesPage() {
                               }}
                             />
                             <span className="relative font-medium">
-                              {fmt(value, 2)}
+                              {fmt(avg, 2)}
                             </span>
                           </div>
                         </td>
@@ -522,12 +579,29 @@ export default function IspTimeseriesPage() {
           </div>
 
           <div className="rounded-2xl border bg-white shadow-sm p-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm text-gray-700">
-                Weekly Avg —{" "}
-                <span className="font-medium">{primaryMetric ?? "—"}</span>
+            <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+              <div className="text-sm text-gray-700 flex items-center gap-2">
+                <span className="whitespace-nowrap">Weekly Avg —</span>
+                <select
+                  className="border rounded-md px-2 py-1 text-sm"
+                  value={metricKey ?? ""}
+                  onChange={(e) => setMetricKey(e.target.value || null)}
+                >
+                  {(ts?.numericKeys ?? []).map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="text-[12px] text-gray-600">
+                <span className="mr-1">Average (range):</span>
+                <span className="font-medium">
+                  {fmt(metricKey ? sum?.avgs[metricKey] : null)}
+                </span>
               </div>
             </div>
+
             <div className="h-[340px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
@@ -565,7 +639,8 @@ export default function IspTimeseriesPage() {
               </ResponsiveContainer>
             </div>
             <p className="text-[11px] text-gray-500 mt-2">
-              Weekly peak across every calendar week in the selected date range.
+              Weekly average across every calendar week in the selected date
+              range.
             </p>
           </div>
         </div>
