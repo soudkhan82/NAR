@@ -28,7 +28,7 @@ import {
   type AreaRow,
   type TsRow,
   type AreaLevel,
-} from "@/app/lib/rpc/cu"; // If your RPC file is different, adjust this path.
+} from "@/app/lib/rpc/cu";
 
 const ALL = "All";
 const DEBUG_TS = true;
@@ -63,10 +63,10 @@ function sortRows(rows: AreaRow[], key: SortKey, dir: SortDir): AreaRow[] {
   return copy;
 }
 
-/* ---------- Color tokens (Tailwind palette) ---------- */
-const GREEN_FILL = "#22c55e"; // green-500
-const PINK_FILL = "#ec4899"; // pink-500
-const PURPLE_FILL = "#a855f7"; // purple-500
+/* ---------- Color tokens ---------- */
+const GREEN_FILL = "#22c55e";
+const PINK_FILL = "#ec4899";
+const PURPLE_FILL = "#a855f7";
 
 export default function UtilizationPage() {
   /* ---------- Filters ---------- */
@@ -75,8 +75,9 @@ export default function UtilizationPage() {
   const [level, setLevel] = useState<AreaLevel>("DISTRICT");
 
   /* ---------- Data ---------- */
-  const [areaRows, setAreaRows] = useState<AreaRow[]>([]);
+  const [areaRows, setAreaRows] = useState<AreaRow[]>([]); // broad scope (all dates)
   const [tsRows, setTsRows] = useState<TsRow[]>([]);
+  const [latestRows, setLatestRows] = useState<AreaRow[]>([]); // snapshot at latest date (cards & table)
   const [loading, setLoading] = useState(false);
 
   /* ---------- Sorting ---------- */
@@ -84,9 +85,8 @@ export default function UtilizationPage() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const toggleSort = useCallback(
     (key: SortKey) => {
-      if (key === sortKey) {
-        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-      } else {
+      if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      else {
         setSortKey(key);
         setSortDir("desc");
       }
@@ -121,26 +121,37 @@ export default function UtilizationPage() {
         fetchHuTimeseries(scope),
       ]);
 
-      setAreaRows(areas.filter((x) => x.area));
+      const cleanAreas = areas.filter((x) => x.area);
+      setAreaRows(cleanAreas);
       setTsRows(ts);
 
-      // ---------- DEBUG ----------
+      // Determine latest date from timeseries and fetch snapshot just for that date
+      let latest: string | null = null;
+      if (Array.isArray(ts) && ts.length) {
+        const sorted = [...ts].sort((a, b) =>
+          (a.d ?? "").localeCompare(b.d ?? "")
+        );
+        latest = sorted.at(-1)?.d ?? null;
+      }
+      if (latest) {
+        const snap = await fetchAreaCounts(level, {
+          subregion: scope.subregion,
+          dateFrom: latest,
+          dateTo: latest,
+        });
+        setLatestRows((snap ?? []).filter((r) => r.area));
+      } else {
+        // fallback: if no TS, use broader rows
+        setLatestRows(cleanAreas);
+      }
+
       if (DEBUG_TS) {
         console.groupCollapsed(
           `%c[TS] scope: ${scope.subregion ?? "All"} | level: ${level}`,
           "color:#2563eb;font-weight:600"
         );
-        console.log("rows count:", ts.length);
-        if (ts.length) {
-          console.log("first row:", ts[0]);
-          console.log("last row:", ts.at(-1));
-          console.log("types:", {
-            avgdl_tp: typeof ts[0].avgdl_tp,
-            prb_dl: typeof ts[0].prb_dl,
-            avgrrc: typeof ts[0].avgrrc,
-          });
-          console.table(ts.slice(Math.max(0, ts.length - 10)));
-        }
+        console.log("TS rows:", ts.length);
+        console.log("Latest for snapshot:", latest);
         console.groupEnd();
       }
     } finally {
@@ -148,62 +159,121 @@ export default function UtilizationPage() {
     }
   };
 
-  // initial & on level change
   useEffect(() => {
-    if (DEBUG_TS) console.log(`[TS] Level changed -> ${level}`);
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    run(); /* eslint-disable-next-line */
   }, [level]);
-
-  // re-fetch & log on subregion change, too
   useEffect(() => {
-    if (DEBUG_TS) console.log(`[TS] SubRegion changed -> ${subregion}`);
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    run(); /* eslint-disable-next-line */
   }, [subregion]);
 
-  // log any updates to tsRows
-  useEffect(() => {
-    if (DEBUG_TS) {
-      console.log(
-        `[TS] tsRows updated -> count=${tsRows.length}`,
-        tsRows.length ? { first: tsRows[0], last: tsRows.at(-1) } : null
-      );
-    }
-  }, [tsRows]);
-
   /* ---------- Derived ---------- */
-  const recordCount = areaRows.length;
+  // Table now uses latest snapshot; fall back to broad scope if needed
+  const tableRows = useMemo(
+    () => (latestRows.length ? latestRows : areaRows),
+    [latestRows, areaRows]
+  );
 
-  // column maximums for heat background
+  const recordCount = tableRows.length;
+
+  // heat maxima based on the table rows (latest snapshot)
   const maxHuCells = useMemo(
-    () => areaRows.reduce((m, r) => Math.max(m, num(r.hu_cells)), 0),
-    [areaRows]
+    () => tableRows.reduce((m, r) => Math.max(m, num(r.hu_cells)), 0),
+    [tableRows]
   );
   const maxHuSites = useMemo(
-    () => areaRows.reduce((m, r) => Math.max(m, num(r.hu_sites)), 0),
-    [areaRows]
+    () => tableRows.reduce((m, r) => Math.max(m, num(r.hu_sites)), 0),
+    [tableRows]
   );
   const maxLuCells = useMemo(
-    () => areaRows.reduce((m, r) => Math.max(m, num(r.lu_cells)), 0),
-    [areaRows]
+    () => tableRows.reduce((m, r) => Math.max(m, num(r.lu_cells)), 0),
+    [tableRows]
   );
   const maxLuSites = useMemo(
-    () => areaRows.reduce((m, r) => Math.max(m, num(r.lu_sites)), 0),
-    [areaRows]
+    () => tableRows.reduce((m, r) => Math.max(m, num(r.lu_sites)), 0),
+    [tableRows]
   );
 
-  // Sorted view
+  // Sorted view of the *tableRows* (latest snapshot)
   const rowsSorted = useMemo(
-    () => sortRows(areaRows, sortKey, sortDir),
-    [areaRows, sortKey, sortDir]
+    () => sortRows(tableRows, sortKey, sortDir),
+    [tableRows, sortKey, sortDir]
   );
 
-  // bar chart titles based on latest point
+  // bar chart titles based on latest point (from TS)
   const lastTs = tsRows.length ? tsRows[tsRows.length - 1] : null;
   const titleDL = `Avg DL_TP — latest: ${friendly(lastTs?.avgdl_tp)}`;
   const titlePRB = `PRB_DL — latest: ${friendly(lastTs?.prb_dl)}`;
   const titleRRC = `Avg RRC — latest: ${friendly(lastTs?.avgrrc)}`;
+
+  // card totals from latest snapshot
+  const cardHuCells = useMemo(
+    () => latestRows.reduce((s, r) => s + num(r.hu_cells), 0),
+    [latestRows]
+  );
+  const cardHuSites = useMemo(
+    () => latestRows.reduce((s, r) => s + num(r.hu_sites), 0),
+    [latestRows]
+  );
+  const cardLuCells = useMemo(
+    () => latestRows.reduce((s, r) => s + num(r.lu_cells), 0),
+    [latestRows]
+  );
+  const cardLuSites = useMemo(
+    () => latestRows.reduce((s, r) => s + num(r.lu_sites), 0),
+    [latestRows]
+  );
+
+  /* ---------- CSV download (current table view) ---------- */
+  const downloadCsv = useCallback(() => {
+    const headers = [
+      "Area",
+      "HU Cells",
+      "HU Sites",
+      "Low Cells",
+      "Low Sites",
+    ] as const;
+
+    const esc = (v: unknown) => {
+      const s = v ?? "";
+      const str = typeof s === "string" ? s : String(s);
+      if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+      return str;
+    };
+
+    const lines = [
+      headers.join(","),
+      ...rowsSorted.map((r) =>
+        [
+          esc(r.area ?? ""),
+          esc(r.hu_cells ?? 0),
+          esc(r.hu_sites ?? 0),
+          esc(r.lu_cells ?? 0),
+          esc(r.lu_sites ?? 0),
+        ].join(",")
+      ),
+    ];
+
+    const csv = "\uFEFF" + lines.join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
+      now.getDate()
+    )}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const safeSub = (subregion || ALL).replace(/[^a-z0-9_-]+/gi, "-");
+    const fname = `utilization_${level.toLowerCase()}_${safeSub}_${timestamp}.csv`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fname;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }, [rowsSorted, level, subregion]);
 
   return (
     <div className="p-6 space-y-6">
@@ -244,46 +314,41 @@ export default function UtilizationPage() {
         </div>
 
         <div className="md:col-span-1">
-          <Button
-            className="w-full"
-            onClick={run}
-            disabled={loading}
-            variant="default"
-          >
+          <Button className="w-full" onClick={run} disabled={loading}>
             {loading ? "Loading…" : "Apply"}
           </Button>
         </div>
       </Card>
 
-      {/* KPI strip (colored cards) */}
+      {/* KPI strip (MOST RECENT SNAPSHOT) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="p-4 bg-green-50 border-green-200">
-          <div className="text-sm text-green-900">HU Cells</div>
+          <div className="text-sm text-green-900">HU Cells (latest)</div>
           <div className="text-2xl font-semibold text-green-900">
-            {areaRows.reduce((s, r) => s + num(r.hu_cells), 0).toLocaleString()}
+            {cardHuCells.toLocaleString()}
           </div>
         </Card>
         <Card className="p-4 bg-pink-50 border-pink-200">
-          <div className="text-sm text-pink-900">HU Sites</div>
+          <div className="text-sm text-pink-900">HU Sites (latest)</div>
           <div className="text-2xl font-semibold text-pink-900">
-            {areaRows.reduce((s, r) => s + num(r.hu_sites), 0).toLocaleString()}
+            {cardHuSites.toLocaleString()}
           </div>
         </Card>
         <Card className="p-4 bg-purple-50 border-purple-200">
-          <div className="text-sm text-purple-900">Low Cells</div>
+          <div className="text-sm text-purple-900">Low Cells (latest)</div>
           <div className="text-2xl font-semibold text-purple-900">
-            {areaRows.reduce((s, r) => s + num(r.lu_cells), 0).toLocaleString()}
+            {cardLuCells.toLocaleString()}
           </div>
         </Card>
         <Card className="p-4 bg-green-50 border-green-200">
-          <div className="text-sm text-green-900">Low Sites</div>
+          <div className="text-sm text-green-900">Low Sites (latest)</div>
           <div className="text-2xl font-semibold text-green-900">
-            {areaRows.reduce((s, r) => s + num(r.lu_sites), 0).toLocaleString()}
+            {cardLuSites.toLocaleString()}
           </div>
         </Card>
       </div>
 
-      {/* BAR CHARTS (distinct colors) */}
+      {/* BAR CHARTS (weekly trend, unchanged dataset) */}
       <Card className="p-4 bg-green-50 border-green-200">
         <div className="text-base font-medium mb-2 text-green-900">
           {titleDL}
@@ -404,15 +469,20 @@ export default function UtilizationPage() {
         )}
       </Card>
 
-      {/* Area table */}
+      {/* Area table — NOW FILTERED TO LATEST SNAPSHOT */}
       <Card className="p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 gap-2">
           <div className="text-sm text-muted-foreground">
             Records:{" "}
             <span className="font-medium">{recordCount.toLocaleString()}</span>
           </div>
-          <div className="text-xs text-muted-foreground">
-            Click headers to sort {sortDir === "asc" ? "▲" : "▼"}
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={downloadCsv}>
+              Download CSV
+            </Button>
+            <div className="text-xs text-muted-foreground">
+              Click headers to sort {sortDir === "asc" ? "▲" : "▼"}
+            </div>
           </div>
         </div>
 
@@ -491,11 +561,7 @@ export default function UtilizationPage() {
                   </td>
                   <td
                     className="py-2 px-3"
-                    style={gradientStyle(
-                      num(r.lu_cells),
-                      maxLuCells,
-                      12 /* orange hue */
-                    )}
+                    style={gradientStyle(num(r.lu_cells), maxLuCells, 12)}
                   >
                     {r.lu_cells?.toLocaleString?.() ?? "—"}
                   </td>
@@ -507,6 +573,16 @@ export default function UtilizationPage() {
                   </td>
                 </tr>
               ))}
+              {!rowsSorted.length && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="py-4 text-center text-muted-foreground"
+                  >
+                    No rows for latest snapshot
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
