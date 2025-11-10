@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import maplibregl, {
   Map as MLMap,
   Marker,
@@ -52,6 +52,14 @@ const toBigint = (siteNameText: string): number | null => {
   const n = Number(siteNameText);
   return Number.isFinite(n) ? n : null;
 };
+
+const norm = (s: unknown) =>
+  (
+    String(s ?? "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "") as string
+  ).trim();
 
 type MarkerRec = { siteName: string; marker: Marker };
 
@@ -521,6 +529,54 @@ export default function ComplaintsGeoPage() {
     ]
   );
 
+  // Helper: select by name + known coordinates (for neighbor clicks)
+  const handleSelectByName = useCallback(
+    async (
+      siteName: string,
+      lon: number | null | undefined,
+      lat: number | null | undefined,
+      extras: Partial<SiteAggRow> = {}
+    ) => {
+      const site = {
+        SiteName: siteName,
+        Longitude: lon ?? undefined,
+        Latitude: lat ?? undefined,
+        ...extras,
+      } as SiteAggRow;
+      await handleSelectSite(site);
+    },
+    [handleSelectSite]
+  );
+
+  /* ---------------- Client-side search (approx match: includes) ---------------- */
+  const [siteQuery, setSiteQuery] = useState<string>("");
+  const [siteAddrQuery, setSiteAddrQuery] = useState<string>("");
+
+  const filteredSites = useMemo(() => {
+    const qName = norm(siteQuery);
+    const qAddr = norm(siteAddrQuery);
+    if (!qName && !qAddr) return sites;
+    return sites.filter((r) => {
+      const nameOk = qName ? norm(r.SiteName).includes(qName) : true;
+      const addrOk = qAddr ? norm(r.Address).includes(qAddr) : true;
+      return nameOk && addrOk;
+    });
+  }, [sites, siteQuery, siteAddrQuery]);
+
+  const [nbQuery, setNbQuery] = useState<string>("");
+  const [nbAddrQuery, setNbAddrQuery] = useState<string>("");
+
+  const filteredNeighbors = useMemo(() => {
+    const qName = norm(nbQuery);
+    const qAddr = norm(nbAddrQuery);
+    if (!qName && !qAddr) return neighbors;
+    return neighbors.filter((n) => {
+      const nameOk = qName ? norm(n.NeighborSiteName).includes(qName) : true;
+      const addrOk = qAddr ? norm(n.Address).includes(qAddr) : true;
+      return nameOk && addrOk;
+    });
+  }, [neighbors, nbQuery, nbAddrQuery]);
+
   /* ---------------- Tables (scroll 10 rows) ---------------- */
   const rowH = 44;
   const visibleRows = 10;
@@ -528,6 +584,13 @@ export default function ComplaintsGeoPage() {
   const selectedName = selectedSite?.SiteName ?? null;
 
   const onRowClick = (r: SiteAggRow) => void handleSelectSite(r);
+
+  const onNeighborRowClick = (n: NeighborRow) =>
+    void handleSelectByName(n.NeighborSiteName, n.Longitude, n.Latitude, {
+      District: n.District ?? undefined,
+      Grid: n.Grid ?? undefined,
+      Address: n.Address ?? undefined,
+    });
 
   /* ---------------- Render ---------------- */
   return (
@@ -628,8 +691,20 @@ export default function ComplaintsGeoPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Sites Table */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
-          <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
-            {`Sites (${sites.length.toLocaleString()} records)`}
+          <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium flex items-center gap-3">
+            <span>{`Sites (${filteredSites.length.toLocaleString()} records)`}</span>
+            <input
+              placeholder="Search SiteName…"
+              className="ml-auto rounded border px-2 py-1 text-black"
+              value={siteQuery}
+              onChange={(e) => setSiteQuery(e.target.value)}
+            />
+            <input
+              placeholder="Search Address…"
+              className="rounded border px-2 py-1 text-black"
+              value={siteAddrQuery}
+              onChange={(e) => setSiteAddrQuery(e.target.value)}
+            />
           </div>
           <div className="overflow-auto" style={{ maxHeight: bodyMaxH }}>
             <table className="min-w-full text-sm">
@@ -643,7 +718,7 @@ export default function ComplaintsGeoPage() {
                 </tr>
               </thead>
               <tbody>
-                {sites.map((r, idx) => (
+                {filteredSites.map((r, idx) => (
                   <tr
                     key={r.SiteName}
                     className={`cursor-pointer ${
@@ -672,8 +747,20 @@ export default function ComplaintsGeoPage() {
 
         {/* Neighbors Table */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
-          <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
-            {`Neighbors (≤ 5 km — ${neighbors.length.toLocaleString()} records)`}
+          <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium flex items-center gap-3">
+            <span>{`Neighbors (≤ 5 km — ${filteredNeighbors.length.toLocaleString()} records)`}</span>
+            <input
+              placeholder="Search Neighbor SiteName…"
+              className="ml-auto rounded border px-2 py-1 text-black"
+              value={nbQuery}
+              onChange={(e) => setNbQuery(e.target.value)}
+            />
+            <input
+              placeholder="Search Address…"
+              className="rounded border px-2 py-1 text-black"
+              value={nbAddrQuery}
+              onChange={(e) => setNbAddrQuery(e.target.value)}
+            />
           </div>
           <div className="overflow-auto" style={{ maxHeight: bodyMaxH }}>
             <table className="min-w-full text-sm">
@@ -687,11 +774,12 @@ export default function ComplaintsGeoPage() {
                 </tr>
               </thead>
               <tbody>
-                {neighbors.map((n, idx) => (
+                {filteredNeighbors.map((n, idx) => (
                   <tr
                     key={n.NeighborSiteName ?? `${idx}`}
-                    className={`${idx % 2 ? "bg-white" : "bg-slate-50"}`}
+                    className="cursor-pointer hover:bg-blue-100"
                     style={{ height: rowH }}
+                    onClick={() => onNeighborRowClick(n)} // NEW: click + zoom + popup
                   >
                     <td className="p-2">{n.NeighborSiteName}</td>
                     <td className="p-2 text-right">
@@ -704,10 +792,12 @@ export default function ComplaintsGeoPage() {
                     <td className="p-2">{n.Address ?? ""}</td>
                   </tr>
                 ))}
-                {!neighbors.length && (
+                {!filteredNeighbors.length && (
                   <tr>
                     <td className="p-2 text-gray-500" colSpan={5}>
-                      Select a site to see neighbors…
+                      {neighbors.length
+                        ? "No neighbors match your search."
+                        : "Select a site to see neighbors…"}
                     </td>
                   </tr>
                 )}
