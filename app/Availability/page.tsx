@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 import {
@@ -37,19 +37,23 @@ import {
   Bar,
   ResponsiveContainer,
 } from "recharts";
+import type {
+  NameType,
+  ValueType,
+} from "recharts/types/component/DefaultTooltipContent";
 
 /* ---------------- tiny utils ---------------- */
-const num = (x: number | null | undefined, frac: number = 2) =>
+const num = (x: number | null | undefined, frac: number = 2): string =>
   typeof x === "number" && Number.isFinite(x)
     ? x.toLocaleString(undefined, { maximumFractionDigits: frac })
     : "—";
 
-const startOfDay = (d: Date) => {
+const startOfDay = (d: Date): Date => {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
   return x;
 };
-const calcWindow = (asOf: Date, freq: Frequency) => {
+const calcWindow = (asOf: Date, freq: Frequency): { from: Date; to: Date } => {
   const to = startOfDay(asOf);
   const from = new Date(to);
   if (freq === "Weekly") from.setDate(from.getDate() - 7);
@@ -57,12 +61,12 @@ const calcWindow = (asOf: Date, freq: Frequency) => {
   return { from, to };
 };
 
-const belowFilter = (r: HitlistRow) =>
+const belowFilter = (r: HitlistRow): boolean =>
   typeof r?.avg_overall_pct === "number" &&
   typeof r?.target_pct === "number" &&
   r.avg_overall_pct < r.target_pct;
 
-const dedupeBySite = (rows: HitlistRow[]) => {
+const dedupeBySite = (rows: HitlistRow[]): HitlistRow[] => {
   const m = new Map<string, HitlistRow>();
   rows.forEach((r) => {
     const k = `${r.site_name}|${r.subregion ?? ""}`;
@@ -72,7 +76,11 @@ const dedupeBySite = (rows: HitlistRow[]) => {
 };
 
 /* ---------------- gradient helpers ---------------- */
-function normalize(val: number | null | undefined, min: number, max: number) {
+function normalize(
+  val: number | null | undefined,
+  min: number,
+  max: number
+): number {
   if (typeof val !== "number" || !Number.isFinite(val)) return 0;
   if (max <= min) return 1;
   return Math.max(0, Math.min(1, (val - min) / (max - min)));
@@ -84,7 +92,6 @@ function gradientStyle(
   hue = 160,
   alpha = 0.32
 ): React.CSSProperties {
-  // background removed later for PGS/SB target columns
   const pct = Math.round(normalize(val, min, max) * 100);
   const color = `hsla(${hue}, 85%, 45%, ${alpha})`;
   return {
@@ -92,13 +99,88 @@ function gradientStyle(
   };
 }
 
-/* ---------------- component ---------------- */
-export default function AvailabilityPage() {
+/* ---------------- column/heat typings ---------------- */
+type KeyNum =
+  | "pgs_target_pct"
+  | "sb_target_pct"
+  | "pgs_site_count"
+  | "sb_site_count"
+  | "dg_site_count"
+  | "pgs_avg_overall_pct"
+  | "sb_avg_overall_pct"
+  | "dg_avg_overall_pct"
+  | "pgs_achieved_count"
+  | "pgs_below_count"
+  | "sb_achieved_count"
+  | "sb_below_count";
+
+type Range = { min: number; max: number };
+type RangeRecord = Record<KeyNum, Range>;
+
+const ALL_KEYS: KeyNum[] = [
+  "pgs_target_pct",
+  "sb_target_pct",
+  "pgs_site_count",
+  "sb_site_count",
+  "dg_site_count",
+  "pgs_avg_overall_pct",
+  "sb_avg_overall_pct",
+  "dg_avg_overall_pct",
+  "pgs_achieved_count",
+  "pgs_below_count",
+  "sb_achieved_count",
+  "sb_below_count",
+];
+
+function computeRanges(rows: SubregionTargetsRow[]): RangeRecord {
+  const init: RangeRecord = {
+    pgs_target_pct: { min: 0, max: 0 },
+    sb_target_pct: { min: 0, max: 0 },
+    pgs_site_count: { min: 0, max: 0 },
+    sb_site_count: { min: 0, max: 0 },
+    dg_site_count: { min: 0, max: 0 },
+    pgs_avg_overall_pct: { min: 0, max: 0 },
+    sb_avg_overall_pct: { min: 0, max: 0 },
+    dg_avg_overall_pct: { min: 0, max: 0 },
+    pgs_achieved_count: { min: 0, max: 0 },
+    pgs_below_count: { min: 0, max: 0 },
+    sb_achieved_count: { min: 0, max: 0 },
+    sb_below_count: { min: 0, max: 0 },
+  };
+  const out: RangeRecord = { ...init };
+  for (const key of ALL_KEYS) {
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const r of rows) {
+      const v = r[key] as unknown as number | null | undefined;
+      if (typeof v === "number" && Number.isFinite(v)) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    if (min === Number.POSITIVE_INFINITY) min = 0;
+    if (max === Number.NEGATIVE_INFINITY) max = 0;
+    out[key] = { min, max };
+  }
+  return out;
+}
+
+/* ---------------- tooltip formatter (typed) ---------------- */
+const pctFormatter = (
+  value: ValueType,
+  name: NameType
+): [React.ReactNode, NameType] => {
+  const n = typeof value === "number" ? value : Number(value);
+  return [<span style={{ color: "#60a5fa" }}>{`${num(n)}%`}</span>, name];
+};
+
+/* ================== Inner page wrapped by Suspense ================== */
+function AvailabilityInner() {
   /* ----- URL filters ----- */
   const sp = useSearchParams();
   const region: Region = parseRegion(sp.get("region"));
   const frequency: Frequency = parseFrequency(sp.get("freq"));
-  const asOf = useMemo(() => {
+  const asOf: Date = useMemo(() => {
     const s = sp.get("asOf");
     const d = s ? new Date(s) : new Date();
     return Number.isNaN(+d) ? new Date() : d;
@@ -132,14 +214,15 @@ export default function AvailabilityPage() {
   });
 
   /* ----- per-component load/error state ----- */
-  const [loading, setLoading] = useState({
+  type LoadKey = "bounds" | "kpis" | "trend" | "bars" | "table";
+  const [loading, setLoading] = useState<Record<LoadKey, boolean>>({
     bounds: false,
-    kpis: false, // rollup + hitlists
-    trend: false, // daily overall
-    bars: false, // district + grid
-    table: false, // same rows state, but own spinner to avoid flicker
+    kpis: false,
+    trend: false,
+    bars: false,
+    table: false,
   });
-  const [errors, setErrors] = useState<{ [k: string]: string | null }>({
+  const [errors, setErrors] = useState<Record<LoadKey, string | null>>({
     bounds: null,
     kpis: null,
     trend: null,
@@ -147,9 +230,9 @@ export default function AvailabilityPage() {
     table: null,
   });
 
-  const setLoadingKey = (k: keyof typeof loading, v: boolean) =>
+  const setLoadingKey = (k: LoadKey, v: boolean) =>
     setLoading((s) => ({ ...s, [k]: v }));
-  const setErrorKey = (k: keyof typeof errors, v: string | null) =>
+  const setErrorKey = (k: LoadKey, v: string | null) =>
     setErrors((s) => ({ ...s, [k]: v }));
 
   /* ----- date bounds tip ----- */
@@ -165,9 +248,9 @@ export default function AvailabilityPage() {
           minISO: b?.minISO ?? null,
           maxISO: b?.maxISO ?? null,
         });
-      } catch (e: any) {
-        if (!cancelled)
-          setErrorKey("bounds", e?.message ?? "Failed to load bounds");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Failed to load bounds";
+        if (!cancelled) setErrorKey("bounds", msg);
       } finally {
         if (!cancelled) setLoadingKey("bounds", false);
       }
@@ -214,9 +297,10 @@ export default function AvailabilityPage() {
             (a, b) => (a.avg_overall_pct ?? 0) - (b.avg_overall_pct ?? 0)
           )
         );
-      } catch (e: any) {
+      } catch (e: unknown) {
+        const msg =
+          e instanceof Error ? e.message : "Failed to load KPIs/table";
         if (!cancelled) {
-          const msg = e?.message ?? "Failed to load KPIs/table";
           setErrorKey("kpis", msg);
           setErrorKey("table", msg);
           setRows([]);
@@ -236,6 +320,7 @@ export default function AvailabilityPage() {
   }, [region, frequency, toISO]);
 
   /* ----- trend + district/grid bars (bundle) ----- */
+  /* ----- trend + district/grid bars (bundle) ----- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -244,7 +329,16 @@ export default function AvailabilityPage() {
       setErrorKey("trend", null);
       setErrorKey("bars", null);
       try {
-        const bundle = await fetchCellAvailBundle({
+        // Readonly-friendly row types
+        type DailyRow = Readonly<{ date?: string; overall?: number | null }>;
+        type PairRow = Readonly<{ name?: string; value?: number | null }>;
+
+        // Accept readonly arrays to match the RPC result
+        const bundle: {
+          daily?: ReadonlyArray<DailyRow>;
+          by_district?: ReadonlyArray<PairRow>;
+          by_grid?: ReadonlyArray<PairRow>;
+        } = await fetchCellAvailBundle({
           region,
           subregion: null,
           grid: null,
@@ -253,24 +347,43 @@ export default function AvailabilityPage() {
           dateFrom: fromISO,
           dateTo: toISO,
         });
+
         if (cancelled) return;
 
-        const daily = (bundle.daily ?? []).filter(
-          (d) => typeof d.date === "string" && typeof d.overall === "number"
-        ) as { date: string; overall: number }[];
+        // Spread into mutable arrays only when we need to transform
+        const daily = [...(bundle.daily ?? [])]
+          .filter(
+            (d): d is { date: string; overall: number } =>
+              typeof d.date === "string" &&
+              typeof d.overall === "number" &&
+              Number.isFinite(d.overall)
+          )
+          .map((d) => ({ date: d.date, overall: d.overall }));
         setOverallSeries(daily);
 
-        const byDist = [...(bundle.by_district ?? [])].sort(
-          (a, b) => (b.value ?? 0) - (a.value ?? 0)
-        );
-        const byGrid = [...(bundle.by_grid ?? [])].sort(
-          (a, b) => (b.value ?? 0) - (a.value ?? 0)
-        );
+        const byDist = [...(bundle.by_district ?? [])]
+          .filter(
+            (r): r is { name: string; value: number } =>
+              typeof r.name === "string" &&
+              typeof r.value === "number" &&
+              Number.isFinite(r.value)
+          )
+          .sort((a, b) => b.value - a.value);
+
+        const byGrid = [...(bundle.by_grid ?? [])]
+          .filter(
+            (r): r is { name: string; value: number } =>
+              typeof r.name === "string" &&
+              typeof r.value === "number" &&
+              Number.isFinite(r.value)
+          )
+          .sort((a, b) => b.value - a.value);
+
         setDistrictBars(byDist);
         setGridBars(byGrid);
-      } catch (e: any) {
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Failed to load charts";
         if (!cancelled) {
-          const msg = e?.message ?? "Failed to load charts";
           setErrorKey("trend", msg);
           setErrorKey("bars", msg);
           setOverallSeries([]);
@@ -319,52 +432,7 @@ export default function AvailabilityPage() {
     }, [rows]);
 
   /* ----- column heat ranges ----- */
-  type KeyNum =
-    | "pgs_target_pct"
-    | "sb_target_pct"
-    | "pgs_site_count"
-    | "sb_site_count"
-    | "dg_site_count"
-    | "pgs_avg_overall_pct"
-    | "sb_avg_overall_pct"
-    | "dg_avg_overall_pct"
-    | "pgs_achieved_count"
-    | "pgs_below_count"
-    | "sb_achieved_count"
-    | "sb_below_count";
-
-  const columnRanges = useMemo(() => {
-    const keys: KeyNum[] = [
-      "pgs_target_pct",
-      "sb_target_pct",
-      "pgs_site_count",
-      "sb_site_count",
-      "dg_site_count",
-      "pgs_avg_overall_pct",
-      "sb_avg_overall_pct",
-      "dg_avg_overall_pct",
-      "pgs_achieved_count",
-      "pgs_below_count",
-      "sb_achieved_count",
-      "sb_below_count",
-    ];
-    const ranges = new Map<KeyNum, { min: number; max: number }>();
-    keys.forEach((k) => {
-      let min = Number.POSITIVE_INFINITY;
-      let max = Number.NEGATIVE_INFINITY;
-      for (const r of rows) {
-        const v = r[k] as unknown as number | null | undefined;
-        if (typeof v === "number" && Number.isFinite(v)) {
-          if (v < min) min = v;
-          if (v > max) max = v;
-        }
-      }
-      if (min === Number.POSITIVE_INFINITY) min = 0;
-      if (max === Number.NEGATIVE_INFINITY) max = 0;
-      ranges.set(k, { min, max });
-    });
-    return ranges;
-  }, [rows]);
+  const columnRanges = useMemo<RangeRecord>(() => computeRanges(rows), [rows]);
 
   const COLS: Array<{
     key: KeyNum;
@@ -532,13 +600,10 @@ export default function AvailabilityPage() {
                           background: "#0f172a",
                           border: "1px solid #334155",
                         }}
-                        labelStyle={{ color: "#ffffff" }} // white label
-                        formatter={(v: any) => [
-                          <span style={{ color: "#60a5fa" }}>{`${num(
-                            v
-                          )}%`}</span>, // blue value
-                          "Overall %",
-                        ]}
+                        labelStyle={{ color: "#ffffff" }}
+                        formatter={(v: ValueType, n: NameType) =>
+                          pctFormatter(v, n)
+                        }
                       />
                       <Bar
                         dataKey="overall"
@@ -575,8 +640,6 @@ export default function AvailabilityPage() {
                 ) : (
                   <div className="h-[340px] overflow-y-auto pr-2">
                     <div className="h-[600px] min-h-full">
-                      {" "}
-                      {/* virtual extra space so labels don't cramp */}
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart
                           data={districtBars}
@@ -601,13 +664,10 @@ export default function AvailabilityPage() {
                               background: "#0f172a",
                               border: "1px solid #334155",
                             }}
-                            labelStyle={{ color: "#ffffff" }} // white
-                            formatter={(v: any) => [
-                              <span style={{ color: "#60a5fa" }}>{`${num(
-                                v
-                              )}%`}</span>, // blue value
-                              "Avg %",
-                            ]}
+                            labelStyle={{ color: "#ffffff" }}
+                            formatter={(v: ValueType, n: NameType) =>
+                              pctFormatter(v, n)
+                            }
                           />
                           <Bar
                             dataKey="value"
@@ -615,7 +675,7 @@ export default function AvailabilityPage() {
                             isAnimationActive={false}
                             barSize={18}
                             fill="#86efac"
-                            activeBar={{ fill: "#000000" }} // hover becomes black bar
+                            activeBar={{ fill: "#000000" }}
                           />
                         </BarChart>
                       </ResponsiveContainer>
@@ -668,13 +728,10 @@ export default function AvailabilityPage() {
                               background: "#0f172a",
                               border: "1px solid #334155",
                             }}
-                            labelStyle={{ color: "#ffffff" }} // white
-                            formatter={(v: any) => [
-                              <span style={{ color: "#60a5fa" }}>{`${num(
-                                v
-                              )}%`}</span>, // blue value
-                              "Avg %",
-                            ]}
+                            labelStyle={{ color: "#ffffff" }}
+                            formatter={(v: ValueType, n: NameType) =>
+                              pctFormatter(v, n)
+                            }
                           />
                           <Bar
                             dataKey="value"
@@ -719,9 +776,24 @@ export default function AvailabilityPage() {
                       <TableRow className="border-slate-800">
                         <TableHead className="w-[180px]">SubRegion</TableHead>
                         <TableHead className="w-[110px]">Region</TableHead>
-                        {COLS.map((c) => (
-                          <TableHead key={c.key} className="text-right">
-                            {c.label}
+                        {ALL_KEYS.map((k) => (
+                          <TableHead key={k} className="text-right">
+                            {
+                              {
+                                pgs_target_pct: "PGS Target %",
+                                sb_target_pct: "SB Target %",
+                                pgs_site_count: "PGS Sites",
+                                sb_site_count: "SB Sites",
+                                dg_site_count: "DG Sites",
+                                pgs_avg_overall_pct: "PGS Avg %",
+                                sb_avg_overall_pct: "SB Avg %",
+                                dg_avg_overall_pct: "DG Avg %",
+                                pgs_achieved_count: "PGS Achieved",
+                                pgs_below_count: "PGS Below",
+                                sb_achieved_count: "SB Achieved",
+                                sb_below_count: "SB Below",
+                              }[k]
+                            }
                           </TableHead>
                         ))}
                       </TableRow>
@@ -736,17 +808,22 @@ export default function AvailabilityPage() {
                             {r.subregion}
                           </TableCell>
                           <TableCell>{r.region_key}</TableCell>
-                          {COLS.map((c) => {
-                            const { min, max } = columnRanges.get(c.key)!;
-                            const val = r[c.key] as unknown as
+                          {ALL_KEYS.map((k) => {
+                            const { min, max } = columnRanges[k];
+                            const val = r[k] as unknown as
                               | number
                               | null
                               | undefined;
+                            const isPct =
+                              k === "pgs_target_pct" ||
+                              k === "sb_target_pct" ||
+                              k === "pgs_avg_overall_pct" ||
+                              k === "sb_avg_overall_pct" ||
+                              k === "dg_avg_overall_pct";
                             const alpha =
-                              c.key === "pgs_target_pct" ||
-                              c.key === "sb_target_pct"
+                              k === "pgs_target_pct" || k === "sb_target_pct"
                                 ? 0
-                                : 0.32; // no bg for targets
+                                : 0.32;
                             const style =
                               alpha === 0
                                 ? undefined
@@ -754,16 +831,16 @@ export default function AvailabilityPage() {
                                     val,
                                     min,
                                     max,
-                                    c.hue ?? (c.isPct ? 160 : 220),
+                                    isPct ? 160 : 220,
                                     alpha
                                   );
                             return (
                               <TableCell
-                                key={c.key}
+                                key={k}
                                 className="text-right relative"
                                 style={style}
                               >
-                                {c.isPct ? `${num(val)}%` : num(val, 0)}
+                                {isPct ? `${num(val)}%` : num(val, 0)}
                               </TableCell>
                             );
                           })}
@@ -782,7 +859,7 @@ export default function AvailabilityPage() {
 }
 
 /* ---------------- CSV helpers ---------------- */
-function buildClassCsv(cls: "PGS" | "SB", rows: HitlistRow[]) {
+function buildClassCsv(cls: "PGS" | "SB", rows: HitlistRow[]): string {
   const header = [
     "class",
     "site_name",
@@ -793,10 +870,10 @@ function buildClassCsv(cls: "PGS" | "SB", rows: HitlistRow[]) {
     "gap_pct",
   ].join(",");
   const lines = rows.map((r) => {
-    const a = r?.avg_overall_pct ?? 0,
-      t = r?.target_pct ?? 0,
-      g = t - a;
-    const vals = [
+    const a = r?.avg_overall_pct ?? 0;
+    const t = r?.target_pct ?? 0;
+    const g = t - a;
+    const vals: Array<string | number> = [
       cls,
       r?.site_name ?? "",
       r?.subregion ?? "",
@@ -820,7 +897,7 @@ function downloadCsvFor(
   region: Region,
   fromISO: string,
   toISO: string
-) {
+): void {
   const csv = buildClassCsv(cls, rows);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -829,4 +906,22 @@ function downloadCsvFor(
   a.download = `below_target_${cls}_${region}_${fromISO}_${toISO}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/* ================== Default export with Suspense wrapper ================== */
+export default function AvailabilityPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-slate-950 text-slate-300 flex items-center justify-center">
+          <div className="flex items-center gap-2 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading Availability…
+          </div>
+        </div>
+      }
+    >
+      <AvailabilityInner />
+    </Suspense>
+  );
 }
