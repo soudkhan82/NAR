@@ -1,649 +1,832 @@
-// app/availability/page.tsx
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+
 import {
+  fetchSubregionTargets,
+  fetchTargetHitlist,
   fetchCellAvailBundle,
-  fetchSubregions,
-  fetchGrids,
-  fetchDistricts,
-  fetchSiteNames,
-  type BundleFilters,
-  type BundleResult,
-  type NameValue,
-  type BandItem,
-  type DailyPoint,
+  fetchCaDateBounds, // date min/max tip
+  parseRegion,
+  parseFrequency,
+  type Region,
+  type Frequency,
+  type SubregionTargetsRow,
+  type HitlistRow,
 } from "@/app/lib/rpc/avail";
 
-/* ========================= tiny utilities ========================= */
-const DEFAULT_BANDS: ReadonlyArray<BandItem> = Object.freeze([
-  { name: "> 95", count: 0 },
-  { name: "90–95", count: 0 },
-  { name: "< 90", count: 0 },
-]);
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { BarChart3, CalendarDays, Download, Info, Loader2 } from "lucide-react";
+import {
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  BarChart,
+  Bar,
+  ResponsiveContainer,
+} from "recharts";
 
-const isAll = (v?: string | null) => !!v && v.trim().toLowerCase() === "all";
-const blankToNull = (s?: string | null) => (s && s.trim() !== "" ? s : null);
-const toFixedOrDash = (v: number | null | undefined) =>
-  v == null || Number.isNaN(v) ? "—" : Number(v).toFixed(2);
+/* ---------------- tiny utils ---------------- */
+const num = (x: number | null | undefined, frac: number = 2) =>
+  typeof x === "number" && Number.isFinite(x)
+    ? x.toLocaleString(undefined, { maximumFractionDigits: frac })
+    : "—";
 
-type HBarRow = { name: string; value: number };
-function sanitizeNameValue(
-  rows: ReadonlyArray<NameValue>
-): ReadonlyArray<HBarRow> {
-  return (rows ?? [])
-    .filter((r) => r.value != null)
-    .map((r) => ({
-      name: r.name,
-      value: Number(r.value),
-    }));
+const startOfDay = (d: Date) => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
+const calcWindow = (asOf: Date, freq: Frequency) => {
+  const to = startOfDay(asOf);
+  const from = new Date(to);
+  if (freq === "Weekly") from.setDate(from.getDate() - 7);
+  else if (freq === "Monthly") from.setDate(from.getDate() - 30);
+  return { from, to };
+};
+
+const belowFilter = (r: HitlistRow) =>
+  typeof r?.avg_overall_pct === "number" &&
+  typeof r?.target_pct === "number" &&
+  r.avg_overall_pct < r.target_pct;
+
+const dedupeBySite = (rows: HitlistRow[]) => {
+  const m = new Map<string, HitlistRow>();
+  rows.forEach((r) => {
+    const k = `${r.site_name}|${r.subregion ?? ""}`;
+    if (!m.has(k)) m.set(k, r);
+  });
+  return [...m.values()];
+};
+
+/* ---------------- gradient helpers ---------------- */
+function normalize(val: number | null | undefined, min: number, max: number) {
+  if (typeof val !== "number" || !Number.isFinite(val)) return 0;
+  if (max <= min) return 1;
+  return Math.max(0, Math.min(1, (val - min) / (max - min)));
+}
+function gradientStyle(
+  val: number | null | undefined,
+  min: number,
+  max: number,
+  hue = 160,
+  alpha = 0.32
+): React.CSSProperties {
+  // background removed later for PGS/SB target columns
+  const pct = Math.round(normalize(val, min, max) * 100);
+  const color = `hsla(${hue}, 85%, 45%, ${alpha})`;
+  return {
+    backgroundImage: `linear-gradient(to right, ${color} ${pct}%, transparent ${pct}%)`,
+  };
 }
 
-/* ============================= page ============================= */
+/* ---------------- component ---------------- */
 export default function AvailabilityPage() {
-  // default dates
-  const todayStr = () => new Date().toISOString().slice(0, 10);
-  const last30Str = () => {
-    const d = new Date();
-    d.setDate(d.getDate() - 29);
-    return d.toISOString().slice(0, 10);
-  };
-
-  const DEFAULT_SUBREGION = "North-1";
-  const ALL_LABEL = "All";
-
-  // filters
-  const [subregion, setSubregion] = useState<string>(DEFAULT_SUBREGION);
-  const [grid, setGrid] = useState<string>("");
-  const [district, setDistrict] = useState<string>("");
-  const [sitename, setSitename] = useState<string>("");
-
-  const [dateFrom, setDateFrom] = useState<string>(last30Str());
-  const [dateTo, setDateTo] = useState<string>(todayStr());
-
-  // cascade clears
-  useEffect(() => {
-    setGrid("");
-    setDistrict("");
-    setSitename("");
-  }, [subregion]);
-  useEffect(() => {
-    setDistrict("");
-    setSitename("");
-  }, [grid]);
-  useEffect(() => {
-    setSitename("");
-  }, [district]);
-
-  // bundle fetch
-  const [bundle, setBundle] = useState<BundleResult | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const filters: BundleFilters = useMemo(
-    () => ({
-      subregion: isAll(subregion) ? null : blankToNull(subregion),
-      grid: blankToNull(grid),
-      district: blankToNull(district),
-      sitename: blankToNull(sitename),
-      dateFrom,
-      dateTo,
-    }),
-    [subregion, grid, district, sitename, dateFrom, dateTo]
+  /* ----- URL filters ----- */
+  const sp = useSearchParams();
+  const region: Region = parseRegion(sp.get("region"));
+  const frequency: Frequency = parseFrequency(sp.get("freq"));
+  const asOf = useMemo(() => {
+    const s = sp.get("asOf");
+    const d = s ? new Date(s) : new Date();
+    return Number.isNaN(+d) ? new Date() : d;
+  }, [sp]);
+  const { from, to } = useMemo(
+    () => calcWindow(asOf, frequency),
+    [asOf, frequency]
   );
+  const fromISO = from.toISOString().slice(0, 10);
+  const toISO = to.toISOString().slice(0, 10);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      setErr(null);
-      try {
-        const data = await fetchCellAvailBundle(filters);
-        if (alive) setBundle(data);
-      } catch (e) {
-        if (alive) {
-          setErr(e instanceof Error ? e.message : "Failed to load data");
-          setBundle(null);
-        }
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [filters]);
-
-  // picklists
-  const loadSubregions = useCallback(async (): Promise<string[]> => {
-    const rows = await fetchSubregions();
-    return Array.from(new Set([ALL_LABEL, ...rows.filter(Boolean)]));
-  }, []);
-  const loadGrids = useCallback(async (): Promise<string[]> => {
-    return await fetchGrids(isAll(subregion) ? null : subregion);
-  }, [subregion]);
-  const loadDistricts = useCallback(async (): Promise<string[]> => {
-    return await fetchDistricts(
-      isAll(subregion) ? null : subregion,
-      blankToNull(grid)
-    );
-  }, [subregion, grid]);
-  const loadSiteNames = useCallback(
-    async (term: string): Promise<string[]> =>
-      await fetchSiteNames(
-        term,
-        isAll(subregion) ? null : subregion,
-        blankToNull(grid),
-        blankToNull(district)
-      ),
-    [subregion, grid, district]
-  );
-
-  // derived
-  const daily: ReadonlyArray<DailyPoint> = bundle?.daily ?? [];
-  const bandsPGS: ReadonlyArray<BandItem> = bundle?.bands_pgs ?? DEFAULT_BANDS;
-  const bandsSB: ReadonlyArray<BandItem> = bundle?.bands_sb ?? DEFAULT_BANDS;
-  const byGrid: ReadonlyArray<HBarRow> = sanitizeNameValue(
-    bundle?.by_grid ?? []
-  );
-  const byDistrict: ReadonlyArray<HBarRow> = sanitizeNameValue(
-    bundle?.by_district ?? []
-  );
-  const yTicks = useMemo(
-    () => Array.from({ length: 51 }, (_, i) => 50 + i),
+  /* ----- data state ----- */
+  const [rows, setRows] = useState<SubregionTargetsRow[]>([]);
+  const [pgsBelowList, setPgsBelowList] = useState<HitlistRow[]>([]);
+  const [sbBelowList, setSbBelowList] = useState<HitlistRow[]>([]);
+  const [overallSeries, setOverallSeries] = useState<
+    { date: string; overall: number }[]
+  >([]);
+  const [districtBars, setDistrictBars] = useState<
+    { name: string; value: number }[]
+  >([]);
+  const [gridBars, setGridBars] = useState<{ name: string; value: number }[]>(
     []
   );
+  const [bounds, setBounds] = useState<{
+    minISO: string | null;
+    maxISO: string | null;
+  }>({
+    minISO: null,
+    maxISO: null,
+  });
 
-  return (
-    <div className="min-h-screen bg-white">
-      <header className="border-b sticky top-0 z-10 bg-white">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-lg md:text-xl font-semibold">
-              Availability Dashboard
-            </h1>
-            <div className="hidden md:block text-xs text-slate-500">
-              {dateFrom} → {dateTo} {loading && " • refreshing…"}
-            </div>
-          </div>
+  /* ----- per-component load/error state ----- */
+  const [loading, setLoading] = useState({
+    bounds: false,
+    kpis: false, // rollup + hitlists
+    trend: false, // daily overall
+    bars: false, // district + grid
+    table: false, // same rows state, but own spinner to avoid flicker
+  });
+  const [errors, setErrors] = useState<{ [k: string]: string | null }>({
+    bounds: null,
+    kpis: null,
+    trend: null,
+    bars: null,
+    table: null,
+  });
 
-          {/* Filters */}
-          <div className="mt-3 rounded-xl border bg-white">
-            <div className="grid md:grid-cols-6 gap-2 p-3">
-              <SelectBox
-                label="SubRegion"
-                value={subregion}
-                onChange={setSubregion}
-                fetchItems={loadSubregions}
-              />
-              <SelectBox
-                label="Grid"
-                value={grid}
-                onChange={setGrid}
-                fetchItems={loadGrids}
-              />
-              <SelectBox
-                label="District"
-                value={district}
-                onChange={setDistrict}
-                fetchItems={loadDistricts}
-              />
-              <Typeahead
-                label="SiteName"
-                value={sitename}
-                onChange={setSitename}
-                fetchItems={loadSiteNames}
-                placeholder="Search site…"
-              />
-              <DateInput label="From" value={dateFrom} onChange={setDateFrom} />
-              <DateInput label="To" value={dateTo} onChange={setDateTo} />
-            </div>
-            <div className="flex items-center gap-2 px-3 pb-3">
-              <button
-                onClick={() => {
-                  setSubregion(DEFAULT_SUBREGION);
-                  setGrid("");
-                  setDistrict("");
-                  setSitename("");
-                  setDateFrom(last30Str());
-                  setDateTo(todayStr());
-                }}
-                className="px-3 py-2 text-sm rounded-lg border hover:bg-slate-50"
-                type="button"
-              >
-                Reset to defaults
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
+  const setLoadingKey = (k: keyof typeof loading, v: boolean) =>
+    setLoading((s) => ({ ...s, [k]: v }));
+  const setErrorKey = (k: keyof typeof errors, v: string | null) =>
+    setErrors((s) => ({ ...s, [k]: v }));
 
-      <main className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-6 space-y-6">
-        {err && <Banner type="error" message={err} />}
-
-        {/* KPI cards */}
-        <CardsLite
-          siteCount={bundle?.cards.site_count ?? 0}
-          avgPGS={bundle?.cards.avg_pgs ?? null}
-          avgSB={bundle?.cards.avg_sb ?? null}
-        />
-
-        {/* Daily PGS/SB */}
-        <Section
-          title="Daily Availability"
-          subtitle="Y-axis 50–100 (1-unit ticks)"
-        >
-          <div className="grid md:grid-cols-2 gap-4">
-            <LineChartSingle
-              title="Daily — PGS"
-              data={daily}
-              xKey="date"
-              yKey="pgs"
-              color="#2563eb"
-              yTicks={yTicks}
-            />
-            <LineChartSingle
-              title="Daily — SB"
-              data={daily}
-              xKey="date"
-              yKey="sb"
-              color="#10b981"
-              yTicks={yTicks}
-            />
-          </div>
-          {daily.length === 0 && (
-            <EmptyState message="No daily data for the selected filters/dates." />
-          )}
-        </Section>
-
-        {/* Bands */}
-        <Section
-          title="Availability Bands"
-          subtitle="Distinct sites by average availability slab"
-        >
-          <div className="grid md:grid-cols-2 gap-4">
-            <BandBarCounts
-              title="PGS — Sites per Band"
-              data={bandsPGS}
-              color="#2563eb"
-            />
-            <BandBarCounts
-              title="SB — Sites per Band"
-              data={bandsSB}
-              color="#10b981"
-            />
-          </div>
-        </Section>
-
-        {/* Geo averages */}
-        <Section
-          title="Geographic Averages"
-          subtitle="Average overall availability by Grid and District"
-        >
-          <div className="grid md:grid-cols-2 gap-4">
-            <HorizontalBarChart
-              title="Avg Overall by Grid"
-              data={byGrid}
-              color="#0ea5e9"
-            />
-            <HorizontalBarChart
-              title="Avg Overall by District"
-              data={byDistrict}
-              color="#8b5cf6"
-            />
-          </div>
-          {byGrid.length === 0 && byDistrict.length === 0 && (
-            <EmptyState message="No Grid/District aggregates for the selected filters/dates." />
-          )}
-        </Section>
-      </main>
-    </div>
-  );
-}
-
-/* ============================ small UI ============================ */
-
-function SelectBox(props: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  fetchItems: () => Promise<string[]>;
-  placeholder?: string;
-}) {
-  const { label, value, onChange, fetchItems, placeholder = "All" } = props;
-  const [opts, setOpts] = useState<ReadonlyArray<string>>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [err, setErr] = useState<string | null>(null);
-
+  /* ----- date bounds tip ----- */
   useEffect(() => {
-    let alive = true;
+    let cancelled = false;
     (async () => {
-      setLoading(true);
-      setErr(null);
+      setLoadingKey("bounds", true);
+      setErrorKey("bounds", null);
       try {
-        const list = await fetchItems();
-        if (alive) setOpts(Array.isArray(list) ? list : []);
-      } catch (e) {
-        if (alive) {
-          setErr(e instanceof Error ? e.message : "Failed to load options");
-          setOpts([]);
-        }
+        const b = await fetchCaDateBounds();
+        if (cancelled) return;
+        setBounds({
+          minISO: b?.minISO ?? null,
+          maxISO: b?.maxISO ?? null,
+        });
+      } catch (e: any) {
+        if (!cancelled)
+          setErrorKey("bounds", e?.message ?? "Failed to load bounds");
       } finally {
-        if (alive) setLoading(false);
+        if (!cancelled) setLoadingKey("bounds", false);
       }
     })();
     return () => {
-      alive = false;
+      cancelled = true;
     };
-  }, [fetchItems]);
+  }, []);
 
-  return (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="opacity-75">{label}</span>
-      <select
-        className="px-2 py-2 rounded-lg border"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {opts.length === 0 && (
-          <option value="">{loading ? "Loading…" : placeholder}</option>
-        )}
-        {opts.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-      {err && <span className="text-[11px] text-rose-600">{err}</span>}
-    </label>
-  );
-}
-
-function Typeahead(props: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  fetchItems: (q: string) => Promise<string[]>;
-  placeholder?: string;
-}) {
-  const { label, value, onChange, fetchItems, placeholder = "Search…" } = props;
-  const [q, setQ] = useState<string>("");
-  const [opts, setOpts] = useState<ReadonlyArray<string>>([]);
-  const [open, setOpen] = useState<boolean>(false);
-
-  const search = useCallback(
-    async (term: string) => {
-      try {
-        const res = await fetchItems(term);
-        setOpts(res ?? []);
-      } catch {
-        setOpts([]);
-      }
-    },
-    [fetchItems]
-  );
-
+  /* ----- rollup + hitlists (KPIs + table) ----- */
   useEffect(() => {
-    if (!open) return;
-    const id = window.setTimeout(() => void search(q), 150);
-    return () => window.clearTimeout(id);
-  }, [q, open, search]);
+    let cancelled = false;
+    (async () => {
+      setLoadingKey("kpis", true);
+      setLoadingKey("table", true);
+      setErrorKey("kpis", null);
+      setErrorKey("table", null);
+      try {
+        const [roll, pgsList, sbList] = await Promise.all([
+          fetchSubregionTargets({ region, asOfISO: toISO, frequency }),
+          fetchTargetHitlist({
+            region,
+            asOfISO: toISO,
+            frequency,
+            classGroup: "PGS",
+          }),
+          fetchTargetHitlist({
+            region,
+            asOfISO: toISO,
+            frequency,
+            classGroup: "SB",
+          }),
+        ]);
+        if (cancelled) return;
+
+        setRows(roll ?? []);
+        setPgsBelowList(
+          dedupeBySite((pgsList ?? []).filter(belowFilter)).sort(
+            (a, b) => (a.avg_overall_pct ?? 0) - (b.avg_overall_pct ?? 0)
+          )
+        );
+        setSbBelowList(
+          dedupeBySite((sbList ?? []).filter(belowFilter)).sort(
+            (a, b) => (a.avg_overall_pct ?? 0) - (b.avg_overall_pct ?? 0)
+          )
+        );
+      } catch (e: any) {
+        if (!cancelled) {
+          const msg = e?.message ?? "Failed to load KPIs/table";
+          setErrorKey("kpis", msg);
+          setErrorKey("table", msg);
+          setRows([]);
+          setPgsBelowList([]);
+          setSbBelowList([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingKey("kpis", false);
+          setLoadingKey("table", false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [region, frequency, toISO]);
+
+  /* ----- trend + district/grid bars (bundle) ----- */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingKey("trend", true);
+      setLoadingKey("bars", true);
+      setErrorKey("trend", null);
+      setErrorKey("bars", null);
+      try {
+        const bundle = await fetchCellAvailBundle({
+          region,
+          subregion: null,
+          grid: null,
+          district: null,
+          sitename: null,
+          dateFrom: fromISO,
+          dateTo: toISO,
+        });
+        if (cancelled) return;
+
+        const daily = (bundle.daily ?? []).filter(
+          (d) => typeof d.date === "string" && typeof d.overall === "number"
+        ) as { date: string; overall: number }[];
+        setOverallSeries(daily);
+
+        const byDist = [...(bundle.by_district ?? [])].sort(
+          (a, b) => (b.value ?? 0) - (a.value ?? 0)
+        );
+        const byGrid = [...(bundle.by_grid ?? [])].sort(
+          (a, b) => (b.value ?? 0) - (a.value ?? 0)
+        );
+        setDistrictBars(byDist);
+        setGridBars(byGrid);
+      } catch (e: any) {
+        if (!cancelled) {
+          const msg = e?.message ?? "Failed to load charts";
+          setErrorKey("trend", msg);
+          setErrorKey("bars", msg);
+          setOverallSeries([]);
+          setDistrictBars([]);
+          setGridBars([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingKey("trend", false);
+          setLoadingKey("bars", false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [region, fromISO, toISO]);
+
+  /* ----- KPIs (aligned with table totals) ----- */
+  const { kpiNetAvg, kpiTotalSites, kpiTotalDG, kpiPgsBelow, kpiSbBelow } =
+    useMemo(() => {
+      const pgsSites = rows.reduce((s, r) => s + (r.pgs_site_count || 0), 0);
+      const sbSites = rows.reduce((s, r) => s + (r.sb_site_count || 0), 0);
+      const denom = pgsSites + sbSites || 1;
+      const weighted =
+        (rows.reduce(
+          (s, r) => s + (r.pgs_avg_overall_pct || 0) * (r.pgs_site_count || 0),
+          0
+        ) +
+          rows.reduce(
+            (s, r) => s + (r.sb_avg_overall_pct || 0) * (r.sb_site_count || 0),
+            0
+          )) /
+        denom;
+
+      const pgsBelow = rows.reduce((s, r) => s + (r.pgs_below_count || 0), 0);
+      const sbBelow = rows.reduce((s, r) => s + (r.sb_below_count || 0), 0);
+
+      return {
+        kpiNetAvg: weighted,
+        kpiTotalSites: pgsSites + sbSites,
+        kpiTotalDG: rows.reduce((s, r) => s + (r.dg_site_count || 0), 0),
+        kpiPgsBelow: pgsBelow,
+        kpiSbBelow: sbBelow,
+      };
+    }, [rows]);
+
+  /* ----- column heat ranges ----- */
+  type KeyNum =
+    | "pgs_target_pct"
+    | "sb_target_pct"
+    | "pgs_site_count"
+    | "sb_site_count"
+    | "dg_site_count"
+    | "pgs_avg_overall_pct"
+    | "sb_avg_overall_pct"
+    | "dg_avg_overall_pct"
+    | "pgs_achieved_count"
+    | "pgs_below_count"
+    | "sb_achieved_count"
+    | "sb_below_count";
+
+  const columnRanges = useMemo(() => {
+    const keys: KeyNum[] = [
+      "pgs_target_pct",
+      "sb_target_pct",
+      "pgs_site_count",
+      "sb_site_count",
+      "dg_site_count",
+      "pgs_avg_overall_pct",
+      "sb_avg_overall_pct",
+      "dg_avg_overall_pct",
+      "pgs_achieved_count",
+      "pgs_below_count",
+      "sb_achieved_count",
+      "sb_below_count",
+    ];
+    const ranges = new Map<KeyNum, { min: number; max: number }>();
+    keys.forEach((k) => {
+      let min = Number.POSITIVE_INFINITY;
+      let max = Number.NEGATIVE_INFINITY;
+      for (const r of rows) {
+        const v = r[k] as unknown as number | null | undefined;
+        if (typeof v === "number" && Number.isFinite(v)) {
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+      }
+      if (min === Number.POSITIVE_INFINITY) min = 0;
+      if (max === Number.NEGATIVE_INFINITY) max = 0;
+      ranges.set(k, { min, max });
+    });
+    return ranges;
+  }, [rows]);
+
+  const COLS: Array<{
+    key: KeyNum;
+    label: string;
+    isPct?: boolean;
+    hue?: number;
+  }> = [
+    { key: "pgs_target_pct", label: "PGS Target %", isPct: true, hue: 160 },
+    { key: "sb_target_pct", label: "SB Target %", isPct: true, hue: 160 },
+    { key: "pgs_site_count", label: "PGS Sites", hue: 220 },
+    { key: "sb_site_count", label: "SB Sites", hue: 220 },
+    { key: "dg_site_count", label: "DG Sites", hue: 220 },
+    { key: "pgs_avg_overall_pct", label: "PGS Avg %", isPct: true, hue: 160 },
+    { key: "sb_avg_overall_pct", label: "SB Avg %", isPct: true, hue: 160 },
+    { key: "dg_avg_overall_pct", label: "DG Avg %", isPct: true, hue: 160 },
+    { key: "pgs_achieved_count", label: "PGS Achieved", hue: 140 },
+    { key: "pgs_below_count", label: "PGS Below", hue: 8 },
+    { key: "sb_achieved_count", label: "SB Achieved", hue: 140 },
+    { key: "sb_below_count", label: "SB Below", hue: 8 },
+  ];
+
+  /* ----- small inline loader ----- */
+  const BlockLoader = ({ label }: { label?: string }) => (
+    <div className="flex items-center justify-center py-8 text-slate-300">
+      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+      <span className="text-sm">{label ?? "Loading..."}</span>
+    </div>
+  );
 
   return (
-    <label className="flex flex-col gap-1 text-sm relative">
-      <span className="opacity-75">{label}</span>
-      <input
-        className="px-2 py-2 rounded-lg border"
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 120)}
-        onInput={(e) => setQ((e.target as HTMLInputElement).value)}
-      />
-      {open && opts.length > 0 && (
-        <div className="absolute z-20 top-[68px] left-0 right-0 border rounded-lg max-h-48 overflow-auto bg-white shadow">
-          {opts.map((o) => (
-            <div
-              key={o}
-              className="px-2 py-1 text-sm hover:bg-slate-50 cursor-pointer"
-              onMouseDown={(ev) => ev.preventDefault()}
-              onClick={() => {
-                onChange(o);
-                setOpen(false);
-              }}
-            >
-              {o}
+    <div className="dark">
+      <div className="min-h-screen bg-slate-950 text-slate-100">
+        <div className="mx-auto max-w-7xl px-3 sm:px-4 py-6 space-y-4">
+          {/* Tip: date bounds */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-slate-800 flex items-center justify-center">
+                <Info className="h-4 w-4 text-blue-300" />
+              </div>
+              <div className="text-xs">
+                {loading.bounds ? (
+                  <span className="inline-flex items-center">
+                    <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                    Fetching available date range…
+                  </span>
+                ) : errors.bounds ? (
+                  <span className="text-rose-300">
+                    Failed to load date bounds
+                  </span>
+                ) : bounds.minISO && bounds.maxISO ? (
+                  <>
+                    Valid data window:{" "}
+                    <span className="tabular-nums">{bounds.minISO}</span> →{" "}
+                    <span className="tabular-nums">{bounds.maxISO}</span>
+                  </>
+                ) : (
+                  "Date bounds unavailable."
+                )}
+              </div>
             </div>
-          ))}
+            <div className="text-[11px] md:text-xs flex items-center gap-2">
+              <Badge variant="secondary">{region}</Badge>
+              <Badge variant="outline">{frequency}</Badge>
+              <span className="inline-flex items-center gap-1">
+                <CalendarDays className="h-3.5 w-3.5" />
+                <span className="tabular-nums">
+                  {fromISO} → {toISO}
+                </span>
+              </span>
+            </div>
+          </div>
+
+          {/* Header */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-lg bg-slate-800 flex items-center justify-center">
+                <BarChart3 className="h-5 w-5 text-teal-300" />
+              </div>
+              <h1 className="text-lg md:text-xl font-semibold">
+                Availability · Summary
+              </h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  downloadCsvFor("PGS", pgsBelowList, region, fromISO, toISO)
+                }
+                disabled={loading.kpis}
+              >
+                <Download className="h-4 w-4 mr-2" /> PGS
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  downloadCsvFor("SB", sbBelowList, region, fromISO, toISO)
+                }
+                disabled={loading.kpis}
+              >
+                <Download className="h-4 w-4 mr-2" /> SB
+              </Button>
+            </div>
+          </div>
+
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {[
+              { label: "Net Avg Overall", value: `${num(kpiNetAvg)}%` },
+              { label: "Distinct Sites", value: num(kpiTotalSites) },
+              { label: "DG Sites", value: num(kpiTotalDG) },
+              { label: "PGS Below", value: num(kpiPgsBelow, 0) },
+              { label: "SB Below", value: num(kpiSbBelow, 0) },
+            ].map((k) => (
+              <Card key={k.label} className="border-slate-800 bg-slate-900/70">
+                <CardHeader className="pb-1">
+                  <CardTitle className="text-xs text-slate-300">
+                    {k.label}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0 min-h-[56px] flex items-center">
+                  {loading.kpis ? (
+                    <BlockLoader />
+                  ) : errors.kpis ? (
+                    <span className="text-rose-300 text-sm">Failed</span>
+                  ) : (
+                    <div className="text-2xl font-semibold">{k.value}</div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Overall trend (bar chart) */}
+          <Card className="border-slate-800 bg-slate-900/70">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Overall Availability</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-2">
+              {loading.trend ? (
+                <BlockLoader label="Loading trend…" />
+              ) : errors.trend ? (
+                <div className="text-rose-300 text-sm">
+                  Failed to load trend
+                </div>
+              ) : overallSeries.length === 0 ? (
+                <div className="text-slate-300 text-sm py-6">No data</div>
+              ) : (
+                <div className="h-[240px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={overallSeries} barCategoryGap={8}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                      />
+                      <YAxis
+                        domain={[50, 100]}
+                        tickCount={51}
+                        tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#0f172a",
+                          border: "1px solid #334155",
+                        }}
+                        labelStyle={{ color: "#ffffff" }} // white label
+                        formatter={(v: any) => [
+                          <span style={{ color: "#60a5fa" }}>{`${num(
+                            v
+                          )}%`}</span>, // blue value
+                          "Overall %",
+                        ]}
+                      />
+                      <Bar
+                        dataKey="overall"
+                        name="Overall %"
+                        isAnimationActive={false}
+                        barSize={18}
+                        fill="#86efac"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* District / Grid horizontal bars (scrollable) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* District */}
+            <Card className="border-slate-800 bg-slate-900/70">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  District · Avg Overall (%)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-2">
+                {loading.bars ? (
+                  <BlockLoader label="Loading districts…" />
+                ) : errors.bars ? (
+                  <div className="text-rose-300 text-sm">
+                    Failed to load districts
+                  </div>
+                ) : districtBars.length === 0 ? (
+                  <div className="text-slate-300 text-sm py-6">No data</div>
+                ) : (
+                  <div className="h-[340px] overflow-y-auto pr-2">
+                    <div className="h-[600px] min-h-full">
+                      {" "}
+                      {/* virtual extra space so labels don't cramp */}
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={districtBars}
+                          layout="vertical"
+                          margin={{ left: 20, top: 4, bottom: 4 }}
+                          barCategoryGap={14}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                          <XAxis
+                            type="number"
+                            domain={[0, 100]}
+                            tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                          />
+                          <YAxis
+                            type="category"
+                            dataKey="name"
+                            tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                            width={130}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              background: "#0f172a",
+                              border: "1px solid #334155",
+                            }}
+                            labelStyle={{ color: "#ffffff" }} // white
+                            formatter={(v: any) => [
+                              <span style={{ color: "#60a5fa" }}>{`${num(
+                                v
+                              )}%`}</span>, // blue value
+                              "Avg %",
+                            ]}
+                          />
+                          <Bar
+                            dataKey="value"
+                            name="Avg %"
+                            isAnimationActive={false}
+                            barSize={18}
+                            fill="#86efac"
+                            activeBar={{ fill: "#000000" }} // hover becomes black bar
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Grid */}
+            <Card className="border-slate-800 bg-slate-900/70">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Grid · Avg Overall (%)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-2">
+                {loading.bars ? (
+                  <BlockLoader label="Loading grids…" />
+                ) : errors.bars ? (
+                  <div className="text-rose-300 text-sm">
+                    Failed to load grids
+                  </div>
+                ) : gridBars.length === 0 ? (
+                  <div className="text-slate-300 text-sm py-6">No data</div>
+                ) : (
+                  <div className="h-[340px] overflow-y-auto pr-2">
+                    <div className="h-[600px] min-h-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={gridBars}
+                          layout="vertical"
+                          margin={{ left: 20, top: 4, bottom: 4 }}
+                          barCategoryGap={14}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                          <XAxis
+                            type="number"
+                            domain={[0, 100]}
+                            tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                          />
+                          <YAxis
+                            type="category"
+                            dataKey="name"
+                            tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                            width={130}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              background: "#0f172a",
+                              border: "1px solid #334155",
+                            }}
+                            labelStyle={{ color: "#ffffff" }} // white
+                            formatter={(v: any) => [
+                              <span style={{ color: "#60a5fa" }}>{`${num(
+                                v
+                              )}%`}</span>, // blue value
+                              "Avg %",
+                            ]}
+                          />
+                          <Bar
+                            dataKey="value"
+                            name="Avg %"
+                            isAnimationActive={false}
+                            barSize={18}
+                            fill="#86efac"
+                            activeBar={{ fill: "#000000" }}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Availability Table (with gradient cells) */}
+          <Card className="border-slate-800 bg-slate-900/70">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">
+                  SubRegion Availability
+                </CardTitle>
+                <div className="text-[11px] text-slate-400">
+                  Gradient = value proportion (per column)
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-2">
+              {loading.table ? (
+                <BlockLoader label="Loading table…" />
+              ) : errors.table ? (
+                <div className="text-rose-300 text-sm">
+                  Failed to load table
+                </div>
+              ) : (
+                <div className="rounded-lg border border-slate-800 overflow-x-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 z-10 bg-slate-900/90">
+                      <TableRow className="border-slate-800">
+                        <TableHead className="w-[180px]">SubRegion</TableHead>
+                        <TableHead className="w-[110px]">Region</TableHead>
+                        {COLS.map((c) => (
+                          <TableHead key={c.key} className="text-right">
+                            {c.label}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rows.map((r) => (
+                        <TableRow
+                          key={r.subregion}
+                          className="border-slate-800"
+                        >
+                          <TableCell className="font-medium">
+                            {r.subregion}
+                          </TableCell>
+                          <TableCell>{r.region_key}</TableCell>
+                          {COLS.map((c) => {
+                            const { min, max } = columnRanges.get(c.key)!;
+                            const val = r[c.key] as unknown as
+                              | number
+                              | null
+                              | undefined;
+                            const alpha =
+                              c.key === "pgs_target_pct" ||
+                              c.key === "sb_target_pct"
+                                ? 0
+                                : 0.32; // no bg for targets
+                            const style =
+                              alpha === 0
+                                ? undefined
+                                : gradientStyle(
+                                    val,
+                                    min,
+                                    max,
+                                    c.hue ?? (c.isPct ? 160 : 220),
+                                    alpha
+                                  );
+                            return (
+                              <TableCell
+                                key={c.key}
+                                className="text-right relative"
+                                style={style}
+                              >
+                                {c.isPct ? `${num(val)}%` : num(val, 0)}
+                              </TableCell>
+                            );
+                          })}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
-      )}
-    </label>
-  );
-}
-
-function DateInput(props: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const { label, value, onChange } = props;
-  return (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="opacity-75">{label} (YYYY-MM-DD)</span>
-      <input
-        type="date"
-        className="px-2 py-2 rounded-lg border"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </label>
-  );
-}
-
-function Banner(props: { type?: "info" | "error"; message: string }) {
-  const { type = "info", message } = props;
-  const cls =
-    type === "error"
-      ? "bg-rose-50 text-rose-700 border-rose-200"
-      : "bg-blue-50 text-blue-700 border-blue-200";
-  return (
-    <div className={`rounded-xl border px-4 py-3 text-sm ${cls}`}>
-      {message}
-    </div>
-  );
-}
-
-function Section(props: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  const { title, subtitle, children } = props;
-  return (
-    <section className="space-y-3">
-      <div>
-        <h2 className="text-base md:text-lg font-semibold">{title}</h2>
-        {subtitle && (
-          <p className="text-xs md:text-sm text-slate-600 mt-0.5">{subtitle}</p>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function CardsLite(props: {
-  siteCount: number;
-  avgPGS: number | null;
-  avgSB: number | null;
-}) {
-  const { siteCount, avgPGS, avgSB } = props;
-  const Card = ({ label, value }: { label: string; value: number | null }) => (
-    <div className="p-4 rounded-xl border bg-white">
-      <div className="text-xs text-slate-600">{label}</div>
-      <div className="text-2xl font-semibold">{toFixedOrDash(value)}</div>
-    </div>
-  );
-  return (
-    <div className="grid md:grid-cols-3 gap-4">
-      <div className="p-4 rounded-xl border bg-white">
-        <div className="text-xs text-slate-600">Sites</div>
-        <div className="text-2xl font-semibold">{siteCount}</div>
-      </div>
-      <Card label="Avg PGS" value={avgPGS} />
-      <Card label="Avg SB" value={avgSB} />
-    </div>
-  );
-}
-
-/* ============================ charts ============================ */
-
-function LineChartSingle(props: {
-  title: string;
-  data: ReadonlyArray<DailyPoint>;
-  xKey: keyof DailyPoint; // "date"
-  yKey: "pgs" | "sb";
-  color?: string;
-  yTicks: ReadonlyArray<number>;
-}) {
-  const { title, data, xKey, yKey, color = "#2563eb", yTicks } = props;
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const {
-    LineChart: RCLineChart,
-    Line,
-    XAxis,
-    YAxis,
-    Tooltip,
-    ResponsiveContainer,
-    CartesianGrid,
-  } = require("recharts");
-  return (
-    <div className="p-4 rounded-xl border bg-white">
-      <div className="text-sm font-medium mb-2">{title}</div>
-      <div style={{ width: "100%", height: 280 }}>
-        <ResponsiveContainer>
-          <RCLineChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey={xKey as string} tick={{ fontSize: 12 }} />
-            <YAxis
-              tick={{ fontSize: 12 }}
-              domain={[50, 100]}
-              ticks={yTicks as number[]}
-            />
-            <Tooltip />
-            <Line type="monotone" dataKey={yKey} dot={false} stroke={color} />
-          </RCLineChart>
-        </ResponsiveContainer>
       </div>
     </div>
   );
 }
 
-function BandBarCounts(props: {
-  title: string;
-  data: ReadonlyArray<BandItem>;
-  color: string;
-}) {
-  const { title, data, color } = props;
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const {
-    BarChart: RCBarChart,
-    Bar,
-    XAxis,
-    YAxis,
-    Tooltip,
-    ResponsiveContainer,
-    CartesianGrid,
-  } = require("recharts");
-  const safe = Array.isArray(data) ? data : DEFAULT_BANDS;
-  return (
-    <div className="p-4 rounded-xl border bg-white">
-      <div className="text-sm font-medium mb-2">{title}</div>
-      <div style={{ width: "100%", height: 260 }}>
-        <ResponsiveContainer>
-          <RCBarChart data={safe}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-            <Tooltip />
-            <Bar dataKey="count" fill={color} />
-          </RCBarChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
+/* ---------------- CSV helpers ---------------- */
+function buildClassCsv(cls: "PGS" | "SB", rows: HitlistRow[]) {
+  const header = [
+    "class",
+    "site_name",
+    "subregion",
+    "region_key",
+    "achieved_overall_pct",
+    "target_pct",
+    "gap_pct",
+  ].join(",");
+  const lines = rows.map((r) => {
+    const a = r?.avg_overall_pct ?? 0,
+      t = r?.target_pct ?? 0,
+      g = t - a;
+    const vals = [
+      cls,
+      r?.site_name ?? "",
+      r?.subregion ?? "",
+      r?.region_key ?? "",
+      a.toFixed(2),
+      t.toFixed(2),
+      g.toFixed(2),
+    ];
+    return vals
+      .map((s) => {
+        const v = String(s ?? "");
+        return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+      })
+      .join(",");
+  });
+  return [header, ...lines].join("\n");
 }
-
-function HorizontalBarChart(props: {
-  title: string;
-  data: ReadonlyArray<HBarRow>;
-  color?: string;
-  visibleCount?: number;
-  barHeight?: number;
-}) {
-  const {
-    title,
-    data,
-    color = "#6b7280",
-    visibleCount = 15,
-    barHeight = 22,
-  } = props;
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const {
-    BarChart: RCBarChart,
-    Bar,
-    XAxis,
-    YAxis,
-    Tooltip,
-    ResponsiveContainer,
-    CartesianGrid,
-  } = require("recharts");
-  const rows = Array.isArray(data) ? data : [];
-  const totalHeight = Math.max(140, rows.length * barHeight + 80);
-  const viewportHeight = Math.max(220, visibleCount * barHeight + 80);
-
-  return (
-    <div className="p-4 rounded-xl border bg-white">
-      <div className="text-sm font-medium mb-2">{title}</div>
-      <div
-        style={{
-          maxHeight: viewportHeight,
-          overflowY: "auto",
-          paddingRight: 4,
-        }}
-      >
-        <div style={{ width: "100%", height: totalHeight, minHeight: 220 }}>
-          <ResponsiveContainer>
-            <RCBarChart
-              data={rows}
-              layout="vertical"
-              margin={{ left: 12, right: 12, top: 8, bottom: 8 }}
-              barCategoryGap={6}
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis type="number" tick={{ fontSize: 12 }} domain={[0, 100]} />
-              <YAxis
-                type="category"
-                dataKey="name"
-                width={160}
-                tick={{ fontSize: 12 }}
-                interval={0}
-              />
-              <Tooltip />
-              <Bar dataKey="value" fill={color} />
-            </RCBarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState(props: { message: string }) {
-  return (
-    <div className="rounded-xl border bg-white p-8 text-center text-sm text-slate-600">
-      {props.message}
-    </div>
-  );
+function downloadCsvFor(
+  cls: "PGS" | "SB",
+  rows: HitlistRow[],
+  region: Region,
+  fromISO: string,
+  toISO: string
+) {
+  const csv = buildClassCsv(cls, rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `below_target_${cls}_${region}_${fromISO}_${toISO}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }

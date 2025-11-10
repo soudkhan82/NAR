@@ -10,7 +10,7 @@ type NavItem = { href: string; label: string };
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Home" },
   { href: "/ANOps", label: "Access Network" },
-  { href: "/Availability", label: "Availability" },
+
   { href: "/traffic", label: "Traffic" },
   { href: "/Lpa", label: "LPA" },
   { href: "/eas", label: "EAS" },
