@@ -7,7 +7,7 @@ import {
   fetchSubregionTargets,
   fetchTargetHitlist,
   fetchCellAvailBundle,
-  fetchCaDateBounds, // date min/max tip
+  fetchCaDateBounds,
   parseRegion,
   parseFrequency,
   type Region,
@@ -43,21 +43,25 @@ import type {
 } from "recharts/types/component/DefaultTooltipContent";
 
 /* ---------------- tiny utils ---------------- */
-const num = (x: number | null | undefined, frac: number = 2): string =>
+const num = (x: number | null | undefined, frac = 2): string =>
   typeof x === "number" && Number.isFinite(x)
     ? x.toLocaleString(undefined, { maximumFractionDigits: frac })
     : "—";
 
-const startOfDay = (d: Date): Date => {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+// Simple date helpers, no timezone logic
+const toLocalISO = (d: Date): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 };
+
 const calcWindow = (asOf: Date, freq: Frequency): { from: Date; to: Date } => {
-  const to = startOfDay(asOf);
+  const to = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate()); // selected day
   const from = new Date(to);
-  if (freq === "Weekly") from.setDate(from.getDate() - 7);
-  else if (freq === "Monthly") from.setDate(from.getDate() - 30);
+  if (freq === "Weekly")
+    from.setDate(from.getDate() - 7); // last 7 days ending at 'to'
+  else if (freq === "Monthly") from.setDate(from.getDate() - 30); // last 30 days ending at 'to'
   return { from, to };
 };
 
@@ -74,30 +78,6 @@ const dedupeBySite = (rows: HitlistRow[]): HitlistRow[] => {
   });
   return [...m.values()];
 };
-
-/* ---------------- gradient helpers ---------------- */
-function normalize(
-  val: number | null | undefined,
-  min: number,
-  max: number
-): number {
-  if (typeof val !== "number" || !Number.isFinite(val)) return 0;
-  if (max <= min) return 1;
-  return Math.max(0, Math.min(1, (val - min) / (max - min)));
-}
-function gradientStyle(
-  val: number | null | undefined,
-  min: number,
-  max: number,
-  hue = 160,
-  alpha = 0.32
-): React.CSSProperties {
-  const pct = Math.round(normalize(val, min, max) * 100);
-  const color = `hsla(${hue}, 85%, 45%, ${alpha})`;
-  return {
-    backgroundImage: `linear-gradient(to right, ${color} ${pct}%, transparent ${pct}%)`,
-  };
-}
 
 /* ---------------- column/heat typings ---------------- */
 type KeyNum =
@@ -133,24 +113,10 @@ const ALL_KEYS: KeyNum[] = [
 ];
 
 function computeRanges(rows: SubregionTargetsRow[]): RangeRecord {
-  const init: RangeRecord = {
-    pgs_target_pct: { min: 0, max: 0 },
-    sb_target_pct: { min: 0, max: 0 },
-    pgs_site_count: { min: 0, max: 0 },
-    sb_site_count: { min: 0, max: 0 },
-    dg_site_count: { min: 0, max: 0 },
-    pgs_avg_overall_pct: { min: 0, max: 0 },
-    sb_avg_overall_pct: { min: 0, max: 0 },
-    dg_avg_overall_pct: { min: 0, max: 0 },
-    pgs_achieved_count: { min: 0, max: 0 },
-    pgs_below_count: { min: 0, max: 0 },
-    sb_achieved_count: { min: 0, max: 0 },
-    sb_below_count: { min: 0, max: 0 },
-  };
-  const out: RangeRecord = { ...init };
+  const out = {} as RangeRecord;
   for (const key of ALL_KEYS) {
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
+    let min = Number.POSITIVE_INFINITY,
+      max = Number.NEGATIVE_INFINITY;
     for (const r of rows) {
       const v = r[key] as unknown as number | null | undefined;
       if (typeof v === "number" && Number.isFinite(v)) {
@@ -158,14 +124,15 @@ function computeRanges(rows: SubregionTargetsRow[]): RangeRecord {
         if (v > max) max = v;
       }
     }
-    if (min === Number.POSITIVE_INFINITY) min = 0;
-    if (max === Number.NEGATIVE_INFINITY) max = 0;
-    out[key] = { min, max };
+    out[key] = {
+      min: min === Number.POSITIVE_INFINITY ? 0 : min,
+      max: max === Number.NEGATIVE_INFINITY ? 0 : max,
+    };
   }
   return out;
 }
 
-/* ---------------- tooltip formatter (typed) ---------------- */
+/* ---------------- tooltip formatter ---------------- */
 const pctFormatter = (
   value: ValueType,
   name: NameType
@@ -174,23 +141,23 @@ const pctFormatter = (
   return [<span style={{ color: "#60a5fa" }}>{`${num(n)}%`}</span>, name];
 };
 
-/* ================== Inner page wrapped by Suspense ================== */
+/* ================== Inner page ================== */
 function AvailabilityInner() {
   /* ----- URL filters ----- */
   const sp = useSearchParams();
   const region: Region = parseRegion(sp.get("region"));
   const frequency: Frequency = parseFrequency(sp.get("freq"));
-  const asOf: Date = useMemo(() => {
-    const s = sp.get("asOf");
-    const d = s ? new Date(s) : new Date();
-    return Number.isNaN(+d) ? new Date() : d;
-  }, [sp]);
+
+  // Selected date from query (YYYY-MM-DD), default = today
+  const s = sp.get("asOf");
+  const asOf = useMemo(() => (s ? new Date(s) : new Date()), [s]);
+
   const { from, to } = useMemo(
     () => calcWindow(asOf, frequency),
     [asOf, frequency]
   );
-  const fromISO = from.toISOString().slice(0, 10);
-  const toISO = to.toISOString().slice(0, 10);
+  const fromStr = toLocalISO(from);
+  const toStr = toLocalISO(to);
 
   /* ----- data state ----- */
   const [rows, setRows] = useState<SubregionTargetsRow[]>([]);
@@ -208,12 +175,9 @@ function AvailabilityInner() {
   const [bounds, setBounds] = useState<{
     minISO: string | null;
     maxISO: string | null;
-  }>({
-    minISO: null,
-    maxISO: null,
-  });
+  }>({ minISO: null, maxISO: null });
 
-  /* ----- per-component load/error state ----- */
+  /* ----- load/error state ----- */
   type LoadKey = "bounds" | "kpis" | "trend" | "bars" | "table";
   const [loading, setLoading] = useState<Record<LoadKey, boolean>>({
     bounds: false,
@@ -229,13 +193,12 @@ function AvailabilityInner() {
     bars: null,
     table: null,
   });
-
   const setLoadingKey = (k: LoadKey, v: boolean) =>
     setLoading((s) => ({ ...s, [k]: v }));
   const setErrorKey = (k: LoadKey, v: string | null) =>
     setErrors((s) => ({ ...s, [k]: v }));
 
-  /* ----- date bounds tip ----- */
+  /* ----- date bounds tip (optional) ----- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -244,13 +207,13 @@ function AvailabilityInner() {
       try {
         const b = await fetchCaDateBounds();
         if (cancelled) return;
-        setBounds({
-          minISO: b?.minISO ?? null,
-          maxISO: b?.maxISO ?? null,
-        });
+        setBounds({ minISO: b?.minISO ?? null, maxISO: b?.maxISO ?? null });
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Failed to load bounds";
-        if (!cancelled) setErrorKey("bounds", msg);
+        if (!cancelled)
+          setErrorKey(
+            "bounds",
+            e instanceof Error ? e.message : "Failed to load bounds"
+          );
       } finally {
         if (!cancelled) setLoadingKey("bounds", false);
       }
@@ -260,7 +223,7 @@ function AvailabilityInner() {
     };
   }, []);
 
-  /* ----- rollup + hitlists (KPIs + table) ----- */
+  /* ----- KPIs + table ----- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -270,16 +233,16 @@ function AvailabilityInner() {
       setErrorKey("table", null);
       try {
         const [roll, pgsList, sbList] = await Promise.all([
-          fetchSubregionTargets({ region, asOfISO: toISO, frequency }),
+          fetchSubregionTargets({ region, asOfISO: toStr, frequency }),
           fetchTargetHitlist({
             region,
-            asOfISO: toISO,
+            asOfISO: toStr,
             frequency,
             classGroup: "PGS",
           }),
           fetchTargetHitlist({
             region,
-            asOfISO: toISO,
+            asOfISO: toStr,
             frequency,
             classGroup: "SB",
           }),
@@ -317,10 +280,9 @@ function AvailabilityInner() {
     return () => {
       cancelled = true;
     };
-  }, [region, frequency, toISO]);
+  }, [region, frequency, toStr]);
 
-  /* ----- trend + district/grid bars (bundle) ----- */
-  /* ----- trend + district/grid bars (bundle) ----- */
+  /* ----- trend + district/grid bars ----- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -329,11 +291,9 @@ function AvailabilityInner() {
       setErrorKey("trend", null);
       setErrorKey("bars", null);
       try {
-        // Readonly-friendly row types
         type DailyRow = Readonly<{ date?: string; overall?: number | null }>;
         type PairRow = Readonly<{ name?: string; value?: number | null }>;
 
-        // Accept readonly arrays to match the RPC result
         const bundle: {
           daily?: ReadonlyArray<DailyRow>;
           by_district?: ReadonlyArray<PairRow>;
@@ -344,13 +304,12 @@ function AvailabilityInner() {
           grid: null,
           district: null,
           sitename: null,
-          dateFrom: fromISO,
-          dateTo: toISO,
+          dateFrom: fromStr,
+          dateTo: toStr,
         });
 
         if (cancelled) return;
 
-        // Spread into mutable arrays only when we need to transform
         const daily = [...(bundle.daily ?? [])]
           .filter(
             (d): d is { date: string; overall: number } =>
@@ -400,7 +359,7 @@ function AvailabilityInner() {
     return () => {
       cancelled = true;
     };
-  }, [region, fromISO, toISO]);
+  }, [region, fromStr, toStr]);
 
   /* ----- KPIs (aligned with table totals) ----- */
   const { kpiNetAvg, kpiTotalSites, kpiTotalDG, kpiPgsBelow, kpiSbBelow } =
@@ -431,30 +390,9 @@ function AvailabilityInner() {
       };
     }, [rows]);
 
-  /* ----- column heat ranges ----- */
   const columnRanges = useMemo<RangeRecord>(() => computeRanges(rows), [rows]);
 
-  const COLS: Array<{
-    key: KeyNum;
-    label: string;
-    isPct?: boolean;
-    hue?: number;
-  }> = [
-    { key: "pgs_target_pct", label: "PGS Target %", isPct: true, hue: 160 },
-    { key: "sb_target_pct", label: "SB Target %", isPct: true, hue: 160 },
-    { key: "pgs_site_count", label: "PGS Sites", hue: 220 },
-    { key: "sb_site_count", label: "SB Sites", hue: 220 },
-    { key: "dg_site_count", label: "DG Sites", hue: 220 },
-    { key: "pgs_avg_overall_pct", label: "PGS Avg %", isPct: true, hue: 160 },
-    { key: "sb_avg_overall_pct", label: "SB Avg %", isPct: true, hue: 160 },
-    { key: "dg_avg_overall_pct", label: "DG Avg %", isPct: true, hue: 160 },
-    { key: "pgs_achieved_count", label: "PGS Achieved", hue: 140 },
-    { key: "pgs_below_count", label: "PGS Below", hue: 8 },
-    { key: "sb_achieved_count", label: "SB Achieved", hue: 140 },
-    { key: "sb_below_count", label: "SB Below", hue: 8 },
-  ];
-
-  /* ----- small inline loader ----- */
+  /* ----- UI ----- */
   const BlockLoader = ({ label }: { label?: string }) => (
     <div className="flex items-center justify-center py-8 text-slate-300">
       <Loader2 className="h-5 w-5 mr-2 animate-spin" />
@@ -499,7 +437,7 @@ function AvailabilityInner() {
               <span className="inline-flex items-center gap-1">
                 <CalendarDays className="h-3.5 w-3.5" />
                 <span className="tabular-nums">
-                  {fromISO} → {toISO}
+                  {fromStr} → {toStr}
                 </span>
               </span>
             </div>
@@ -520,7 +458,7 @@ function AvailabilityInner() {
                 size="sm"
                 variant="secondary"
                 onClick={() =>
-                  downloadCsvFor("PGS", pgsBelowList, region, fromISO, toISO)
+                  downloadCsvFor("PGS", pgsBelowList, region, fromStr, toStr)
                 }
                 disabled={loading.kpis}
               >
@@ -530,7 +468,7 @@ function AvailabilityInner() {
                 size="sm"
                 variant="secondary"
                 onClick={() =>
-                  downloadCsvFor("SB", sbBelowList, region, fromISO, toISO)
+                  downloadCsvFor("SB", sbBelowList, region, fromStr, toStr)
                 }
                 disabled={loading.kpis}
               >
@@ -567,7 +505,7 @@ function AvailabilityInner() {
             ))}
           </div>
 
-          {/* Overall trend (bar chart) */}
+          {/* Overall trend */}
           <Card className="border-slate-800 bg-slate-900/70">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Overall Availability</CardTitle>
@@ -619,9 +557,8 @@ function AvailabilityInner() {
             </CardContent>
           </Card>
 
-          {/* District / Grid horizontal bars (scrollable) */}
+          {/* District / Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* District */}
             <Card className="border-slate-800 bg-slate-900/70">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">
@@ -685,7 +622,6 @@ function AvailabilityInner() {
               </CardContent>
             </Card>
 
-            {/* Grid */}
             <Card className="border-slate-800 bg-slate-900/70">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">
@@ -750,111 +686,116 @@ function AvailabilityInner() {
             </Card>
           </div>
 
-          {/* Availability Table (with gradient cells) */}
-          <Card className="border-slate-800 bg-slate-900/70">
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">
-                  SubRegion Availability
-                </CardTitle>
-                <div className="text-[11px] text-slate-400">
-                  Gradient = value proportion (per column)
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {loading.table ? (
-                <BlockLoader label="Loading table…" />
-              ) : errors.table ? (
-                <div className="text-rose-300 text-sm">
-                  Failed to load table
-                </div>
-              ) : (
-                <div className="rounded-lg border border-slate-800 overflow-x-auto">
-                  <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-slate-900/90">
-                      <TableRow className="border-slate-800">
-                        <TableHead className="w-[180px]">SubRegion</TableHead>
-                        <TableHead className="w-[110px]">Region</TableHead>
-                        {ALL_KEYS.map((k) => (
-                          <TableHead key={k} className="text-right">
-                            {
-                              {
-                                pgs_target_pct: "PGS Target %",
-                                sb_target_pct: "SB Target %",
-                                pgs_site_count: "PGS Sites",
-                                sb_site_count: "SB Sites",
-                                dg_site_count: "DG Sites",
-                                pgs_avg_overall_pct: "PGS Avg %",
-                                sb_avg_overall_pct: "SB Avg %",
-                                dg_avg_overall_pct: "DG Avg %",
-                                pgs_achieved_count: "PGS Achieved",
-                                pgs_below_count: "PGS Below",
-                                sb_achieved_count: "SB Achieved",
-                                sb_below_count: "SB Below",
-                              }[k]
-                            }
-                          </TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {rows.map((r) => (
-                        <TableRow
-                          key={r.subregion}
-                          className="border-slate-800"
-                        >
-                          <TableCell className="font-medium">
-                            {r.subregion}
-                          </TableCell>
-                          <TableCell>{r.region_key}</TableCell>
-                          {ALL_KEYS.map((k) => {
-                            const { min, max } = columnRanges[k];
-                            const val = r[k] as unknown as
-                              | number
-                              | null
-                              | undefined;
-                            const isPct =
-                              k === "pgs_target_pct" ||
-                              k === "sb_target_pct" ||
-                              k === "pgs_avg_overall_pct" ||
-                              k === "sb_avg_overall_pct" ||
-                              k === "dg_avg_overall_pct";
-                            const alpha =
-                              k === "pgs_target_pct" || k === "sb_target_pct"
-                                ? 0
-                                : 0.32;
-                            const style =
-                              alpha === 0
-                                ? undefined
-                                : gradientStyle(
-                                    val,
-                                    min,
-                                    max,
-                                    isPct ? 160 : 220,
-                                    alpha
-                                  );
-                            return (
-                              <TableCell
-                                key={k}
-                                className="text-right relative"
-                                style={style}
-                              >
-                                {isPct ? `${num(val)}%` : num(val, 0)}
-                              </TableCell>
-                            );
-                          })}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Table */}
+          <SubregionTable rows={rows} columnRanges={columnRanges} />
         </div>
       </div>
     </div>
+  );
+}
+
+/* ---------------- Table (split out just for clarity) ---------------- */
+function SubregionTable({
+  rows,
+  columnRanges,
+}: {
+  rows: SubregionTargetsRow[];
+  columnRanges: Record<keyof SubregionTargetsRow & KeyNum, Range>;
+}) {
+  return (
+    <Card className="border-slate-800 bg-slate-900/70">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">SubRegion Availability</CardTitle>
+          <div className="text-[11px] text-slate-400">
+            Gradient = value proportion (per column)
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-2">
+        <div className="rounded-lg border border-slate-800 overflow-x-auto">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-slate-900/90">
+              <TableRow className="border-slate-800">
+                <TableHead className="w-[180px]">SubRegion</TableHead>
+                <TableHead className="w-[110px]">Region</TableHead>
+                {ALL_KEYS.map((k) => (
+                  <TableHead key={k} className="text-right">
+                    {
+                      {
+                        pgs_target_pct: "PGS Target %",
+                        sb_target_pct: "SB Target %",
+                        pgs_site_count: "PGS Sites",
+                        sb_site_count: "SB Sites",
+                        dg_site_count: "DG Sites",
+                        pgs_avg_overall_pct: "PGS Avg %",
+                        sb_avg_overall_pct: "SB Avg %",
+                        dg_avg_overall_pct: "DG Avg %",
+                        pgs_achieved_count: "PGS Achieved",
+                        pgs_below_count: "PGS Below",
+                        sb_achieved_count: "SB Achieved",
+                        sb_below_count: "SB Below",
+                      }[k]
+                    }
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.subregion} className="border-slate-800">
+                  <TableCell className="font-medium">{r.subregion}</TableCell>
+                  <TableCell>{r.region_key}</TableCell>
+                  {ALL_KEYS.map((k) => {
+                    const { min, max } = columnRanges[k];
+                    const val = r[k] as unknown as number | null | undefined;
+                    const isPct =
+                      k === "pgs_target_pct" ||
+                      k === "sb_target_pct" ||
+                      k === "pgs_avg_overall_pct" ||
+                      k === "sb_avg_overall_pct" ||
+                      k === "dg_avg_overall_pct";
+                    const alpha =
+                      k === "pgs_target_pct" || k === "sb_target_pct"
+                        ? 0
+                        : 0.32;
+                    const style =
+                      alpha === 0
+                        ? undefined
+                        : ({
+                            backgroundImage: `linear-gradient(to right, hsla(${
+                              isPct ? 160 : 220
+                            }, 85%, 45%, ${alpha}) ${Math.round(
+                              Math.max(
+                                0,
+                                Math.min(
+                                  1,
+                                  typeof val === "number" &&
+                                    Number.isFinite(val) &&
+                                    max > min
+                                    ? (val - min) / (max - min)
+                                    : 0
+                                )
+                              ) * 100
+                            )}%, transparent 0%)`,
+                          } as React.CSSProperties);
+                    return (
+                      <TableCell
+                        key={k}
+                        className="text-right relative"
+                        style={style}
+                      >
+                        {isPct ? `${num(val)}%` : num(val, 0)}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

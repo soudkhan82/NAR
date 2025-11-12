@@ -44,7 +44,14 @@ const fmtDate = (d?: Date) =>
       })
     : "—";
 
-const toISO = (d?: Date) => (d ? d.toISOString().slice(0, 10) : "");
+// format as YYYY-MM-DD from the chosen date
+const toLocalISO = (d?: Date) => {
+  if (!d) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
 
 /* ---------------- Component ---------------- */
 export default function HomeDashboardPage() {
@@ -56,7 +63,7 @@ export default function HomeDashboardPage() {
     asOf: undefined,
   });
 
-  // Max selectable date = current date - 1 day (00:00 local)
+  // Max selectable date = yesterday
   const maxDate = useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
@@ -66,25 +73,23 @@ export default function HomeDashboardPage() {
 
   const canApply = !!filters.asOf;
 
-  // Navigate to Availability reports with current filters
+  // Navigate with plain YYYY-MM-DD selected date
   const goAvailabilityReports = (): void => {
     const qs = new URLSearchParams({
       region: filters.region,
       freq: filters.frequency,
-      asOf: toISO(filters.asOf),
+      asOf: toLocalISO(filters.asOf),
     });
     router.push(`/Availability?${qs.toString()}`);
   };
 
   return (
     <div className="min-h-screen bg-black text-neutral-100 antialiased">
-      {/* Ambient gradient accent */}
       <div className="pointer-events-none fixed inset-0 [mask-image:radial-gradient(45rem_30rem_at_20%_20%,black,transparent)]">
         <div className="absolute -top-24 -left-24 size-[28rem] rounded-full bg-emerald-500/10 blur-3xl" />
       </div>
 
       <main className="mx-auto max-w-7xl px-3 sm:px-4 py-6">
-        {/* Header strip */}
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -99,7 +104,6 @@ export default function HomeDashboardPage() {
           </div>
         </motion.div>
 
-        {/* Two-card layout: left calendar, right controls + sections */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
           {/* Calendar Card */}
           <motion.div
@@ -116,7 +120,6 @@ export default function HomeDashboardPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {/* HIGH-CONTRAST CALENDAR */}
                 <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-2 max-w-[270px]">
                   <Calendar
                     mode="single"
@@ -143,7 +146,6 @@ export default function HomeDashboardPage() {
                         "text-neutral-300 text-[10px] w-8 py-1 font-medium",
                       row: "grid grid-cols-7 mt-1 gap-y-1",
                       cell: "relative p-0 text-center text-[12px]",
-                      // Key contrast updates:
                       day: "h-8 w-8 rounded-md p-0 font-medium text-neutral-100 aria-selected:opacity-100 hover:bg-neutral-800 hover:text-neutral-50 transition",
                       day_selected:
                         "bg-emerald-500 text-black hover:bg-emerald-400",
@@ -269,13 +271,11 @@ export default function HomeDashboardPage() {
                       </TabsList>
                     </Tabs>
                   </div>
-
-                  {/* (Apply button intentionally hidden in your version) */}
                 </div>
 
                 <Separator className="bg-neutral-800" />
 
-                {/* Sections list */}
+                {/* Sections */}
                 <div className="space-y-3">
                   {/* Availability */}
                   <motion.div
@@ -347,7 +347,7 @@ export default function HomeDashboardPage() {
                             const qs = new URLSearchParams({
                               region: filters.region,
                               freq: filters.frequency,
-                              asOf: toISO(filters.asOf),
+                              asOf: toLocalISO(filters.asOf),
                             });
                             router.push(`/PSCore?${qs.toString()}`);
                           }}
@@ -393,7 +393,7 @@ export default function HomeDashboardPage() {
                             const qs = new URLSearchParams({
                               region: filters.region,
                               freq: filters.frequency,
-                              asOf: toISO(filters.asOf),
+                              asOf: toLocalISO(filters.asOf),
                             });
                             router.push(`/LPA?${qs.toString()}`);
                           }}
@@ -439,7 +439,7 @@ export default function HomeDashboardPage() {
                             const qs = new URLSearchParams({
                               region: filters.region,
                               freq: filters.frequency,
-                              asOf: toISO(filters.asOf),
+                              asOf: toLocalISO(filters.asOf),
                             });
                             router.push(`/Complaints?${qs.toString()}`);
                           }}
