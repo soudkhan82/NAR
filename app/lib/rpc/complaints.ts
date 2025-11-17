@@ -27,10 +27,25 @@ export interface NeighborRow {
   NeighborSiteName: string;
   Latitude: number | null;
   Longitude: number | null;
-  District: string | null;           // <-- NEW
-  Grid: string | null;               // <-- NEW
-  Address: string | null;            // <-- NEW
+  District: string | null; // <-- NEW
+  Grid: string | null; // <-- NEW
+  Address: string | null; // <-- NEW
   distance_km: number;
+}
+
+// ===== NEW TYPES =====
+export interface TsAggRow {
+  d: string; // yyyy-mm-dd
+  SERVICETITLE: string | null;
+  complaints_count: number;
+}
+export interface ServiceCountRow {
+  SERVICETITLE: string | null;
+  complaints_count: number;
+}
+export interface GridCountRow {
+  Grid: string | null;
+  complaints_count: number;
 }
 
 /* --------- Small helper to surface real errors --------- */
@@ -163,4 +178,52 @@ export async function fetchNeighbors(
   );
   if (error) throw explainError(error);
   return (data ?? []) as NeighborRow[];
+}
+
+export async function fetchTimeseriesAll(params: {
+  region: string | null;
+  subregion: string | null;
+  district: string | null;
+  grid: string | null;
+}): Promise<TsAggRow[]> {
+  const { data, error } = await supabase.rpc("complaints_timeseries_all", {
+    p_region: params.region,
+    p_subregion: params.subregion,
+    p_district: params.district,
+    p_grid: params.grid,
+  });
+  if (error) throw explainError(error);
+  return (data ?? []) as TsAggRow[];
+}
+
+export async function fetchCountsByService(params: {
+  region: string | null;
+  subregion: string | null;
+  district: string | null;
+  grid: string | null;
+}): Promise<ServiceCountRow[]> {
+  const { data, error } = await supabase.rpc("complaints_counts_by_service", {
+    p_region: params.region,
+    p_subregion: params.subregion,
+    p_district: params.district,
+    p_grid: params.grid,
+  });
+  if (error) throw explainError(error);
+  return (data ?? []) as ServiceCountRow[];
+}
+
+export async function fetchCountsByGrid(params: {
+  region: string | null;
+  subregion: string | null;
+  district: string | null;
+  grid: string | null;
+}): Promise<GridCountRow[]> {
+  const { data, error } = await supabase.rpc("complaints_counts_by_grid", {
+    p_region: params.region,
+    p_subregion: params.subregion,
+    p_district: params.district,
+    p_grid: params.grid,
+  });
+  if (error) throw explainError(error);
+  return (data ?? []) as GridCountRow[];
 }

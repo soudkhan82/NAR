@@ -20,10 +20,16 @@ import {
   fetchTimeseries,
   fetchServiceBadges,
   fetchNeighbors,
+  fetchTimeseriesAll, // filter-scoped time series (with SERVICETITLE)
+  fetchCountsByService,
+  fetchCountsByGrid,
   type SiteAggRow as RpcSiteAggRow,
   type TsRow,
   type ServiceBadgeRow,
   type NeighborRow as RpcNeighborRow,
+  type TsAggRow,
+  type ServiceCountRow,
+  type GridCountRow,
 } from "@/app/lib/rpc/complaints";
 
 import {
@@ -63,13 +69,16 @@ const norm = (s: unknown) =>
 
 type MarkerRec = { siteName: string; marker: Marker };
 
-/** Threshold colors */
+/** Threshold colors for map markers */
 const complaintsColor = (count: number | null | undefined): string => {
   const v = typeof count === "number" ? count : 0;
   if (v > 40) return "rgba(220, 38, 38, 0.9)"; // red
   if (v >= 20) return "rgba(249, 115, 22, 0.9)"; // orange
   return "rgba(234, 179, 8, 0.9)"; // yellow
 };
+
+/** Distinct colors for the 4 service charts */
+const SERVICE_COLORS = ["#ef4444", "#f97316", "#22c55e", "#3b82f6"] as const;
 
 export default function ComplaintsGeoPage() {
   /** Filters */
@@ -92,6 +101,11 @@ export default function ComplaintsGeoPage() {
   const [selectedSite, setSelectedSite] = useState<SiteAggRow | null>(null);
   const [ts, setTs] = useState<TsRow[]>([]);
   const [badges, setBadges] = useState<ServiceBadgeRow[]>([]);
+
+  /** RIGHT SIDEBAR + CHART ROW DATA (filter scoped) */
+  const [tsAll, setTsAll] = useState<TsAggRow[]>([]);
+  const [svcCounts, setSvcCounts] = useState<ServiceCountRow[]>([]);
+  const [gridCounts, setGridCounts] = useState<GridCountRow[]>([]);
 
   /** Map refs */
   const mapRef = useRef<MLMap | null>(null);
@@ -281,8 +295,8 @@ export default function ComplaintsGeoPage() {
         const p = new maplibregl.Popup({
           closeButton: false,
           closeOnClick: false,
-          anchor: "left", // popup appears on the RIGHT side
-          offset: [12, 0], // push a bit further right
+          anchor: "left",
+          offset: [12, 0],
           maxWidth: `${POPUP_WIDTH}px`,
         })
           .setLngLat([r.Longitude as number, r.Latitude as number])
@@ -505,9 +519,9 @@ export default function ComplaintsGeoPage() {
         const { wrap, chartId, badgesId } = await renderPopupContent(site);
         popupRef.current = new maplibregl.Popup({
           closeButton: true,
-          anchor: "left", // popup appears on the RIGHT side
-          offset: [14, 0], // extra horizontal space
-          maxWidth: `${POPUP_WIDTH + 40}px`, // avoid default 240px clamp
+          anchor: "left",
+          offset: [14, 0],
+          maxWidth: `${POPUP_WIDTH + 40}px`,
         })
           .setLngLat([site.Longitude, site.Latitude])
           .setDOMContent(wrap)
@@ -577,6 +591,68 @@ export default function ComplaintsGeoPage() {
     });
   }, [neighbors, nbQuery, nbAddrQuery]);
 
+  /* ---------------- RIGHT-SCOPED DATA (Top 4 service charts + tables) ---------------- */
+  const loadRightScoped = useCallback(async () => {
+    try {
+      const args = {
+        region: region ?? null,
+        subregion: subRegion ?? null,
+        district: district ?? null,
+        grid: grid ?? null,
+      };
+      const [tsA, svc, grd] = await Promise.all([
+        fetchTimeseriesAll(args),
+        fetchCountsByService(args),
+        fetchCountsByGrid(args),
+      ]);
+      svc.sort((a, b) => (b.complaints_count ?? 0) - (a.complaints_count ?? 0));
+      grd.sort((a, b) => (b.complaints_count ?? 0) - (a.complaints_count ?? 0));
+      setTsAll(tsA);
+      setSvcCounts(svc);
+      setGridCounts(grd);
+    } catch (e) {
+      console.error("loadRightScoped error", e);
+      setTsAll([]);
+      setSvcCounts([]);
+      setGridCounts([]);
+    }
+  }, [region, subRegion, district, grid]);
+
+  useEffect(() => {
+    void loadRightScoped();
+  }, [loadRightScoped]);
+
+  /** Build 4 service-wise line series from tsAll */
+  type ServiceSeries = {
+    service: string;
+    points: TsAggRow[];
+    total: number;
+  };
+
+  const topServiceSeries: ServiceSeries[] = useMemo(() => {
+    if (!tsAll.length) return [];
+
+    const grouped = new Map<string, TsAggRow[]>();
+    tsAll.forEach((row) => {
+      const key = row.SERVICETITLE ?? "Unknown";
+      const arr = grouped.get(key) ?? [];
+      arr.push(row);
+      grouped.set(key, arr);
+    });
+
+    const series: ServiceSeries[] = [];
+    grouped.forEach((rows, key) => {
+      const total = rows.reduce((sum, r) => sum + (r.complaints_count ?? 0), 0);
+      // sort each series by date
+      rows.sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1));
+      series.push({ service: key, points: rows, total });
+    });
+
+    // Sort by total complaints desc and take top 4
+    series.sort((a, b) => b.total - a.total);
+    return series.slice(0, 4);
+  }, [tsAll]);
+
   /* ---------------- Tables (scroll 10 rows) ---------------- */
   const rowH = 44;
   const visibleRows = 10;
@@ -584,7 +660,6 @@ export default function ComplaintsGeoPage() {
   const selectedName = selectedSite?.SiteName ?? null;
 
   const onRowClick = (r: SiteAggRow) => void handleSelectSite(r);
-
   const onNeighborRowClick = (n: NeighborRow) =>
     void handleSelectByName(n.NeighborSiteName, n.Longitude, n.Latitude, {
       District: n.District ?? undefined,
@@ -604,90 +679,222 @@ export default function ComplaintsGeoPage() {
 
       <h1 className="text-xl font-semibold">Complaints Geo Dashboard</h1>
 
-      {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <label className="flex flex-col text-sm">
-          <span className="mb-1">Region</span>
-          <select
-            className="border rounded px-2 py-1"
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-          >
-            {regions.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </label>
+      {/* TOP ROW – Filters + 4 ServiceTitle Time-series Charts */}
+      <div className="space-y-3">
+        {/* Filters */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <label className="flex flex-col text-sm">
+            <span className="mb-1">Region</span>
+            <select
+              className="border rounded px-2 py-1"
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
+            >
+              {regions.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="flex flex-col text-sm">
-          <span className="mb-1">SubRegion</span>
-          <select
-            className="border rounded px-2 py-1"
-            value={subRegion ?? ""}
-            onChange={(e) => setSubRegion(e.target.value || null)}
-          >
-            <option value="">All</option>
-            {subRegions.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="flex flex-col text-sm">
+            <span className="mb-1">SubRegion</span>
+            <select
+              className="border rounded px-2 py-1"
+              value={subRegion ?? ""}
+              onChange={(e) => setSubRegion(e.target.value || null)}
+            >
+              <option value="">All</option>
+              {subRegions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="flex flex-col text-sm">
-          <span className="mb-1">District</span>
-          <select
-            className="border rounded px-2 py-1"
-            value={district ?? ""}
-            onChange={(e) => setDistrict(e.target.value || null)}
-          >
-            <option value="">All</option>
-            {districts.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="flex flex-col text-sm">
+            <span className="mb-1">District</span>
+            <select
+              className="border rounded px-2 py-1"
+              value={district ?? ""}
+              onChange={(e) => setDistrict(e.target.value || null)}
+            >
+              <option value="">All</option>
+              {districts.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="flex flex-col text-sm">
-          <span className="mb-1">Grid</span>
-          <select
-            className="border rounded px-2 py-1"
-            value={grid ?? ""}
-            onChange={(e) => setGrid(e.target.value || null)}
-          >
-            <option value="">All</option>
-            {grids.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="flex flex-col text-sm">
+            <span className="mb-1">Grid</span>
+            <select
+              className="border rounded px-2 py-1"
+              value={grid ?? ""}
+              onChange={(e) => setGrid(e.target.value || null)}
+            >
+              <option value="">All</option>
+              {grids.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <div className="flex items-end">
-          <button
-            type="button"
-            className="border rounded px-3 py-2 text-sm"
-            onClick={() => void loadSites()}
-          >
-            Refresh
-          </button>
+          <div className="flex items-end">
+            <button
+              type="button"
+              className="border rounded px-3 py-2 text-sm"
+              onClick={() => void loadSites()}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        {/* 4 side-by-side charts for top 4 ServiceTitles */}
+        <div className="border rounded-xl shadow-sm p-3 space-y-2 bg-slate-50">
+          <div className="text-sm font-medium text-slate-800 mb-1">
+            Top 4 ServiceTitle complaint trends
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {topServiceSeries.map((s, idx) => {
+              const color =
+                SERVICE_COLORS[idx % SERVICE_COLORS.length] ?? "#3b82f6";
+              return (
+                <div
+                  key={s.service}
+                  className="border rounded-lg bg-white shadow-sm flex flex-col"
+                >
+                  <div
+                    className="px-3 py-1.5 text-xs font-semibold text-white truncate"
+                    style={{ backgroundColor: color }}
+                  >
+                    {s.service}
+                  </div>
+                  <div className="p-2 h-[170px]">
+                    <ResponsiveContainer width="100%" height={150}>
+                      <LineChart data={s.points}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="d" tick={{ fontSize: 9 }} />
+                        <YAxis tick={{ fontSize: 9 }} />
+                        <Tooltip />
+                        <Line
+                          type="monotone"
+                          dataKey="complaints_count"
+                          dot={false}
+                          stroke={color}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              );
+            })}
+            {!topServiceSeries.length && (
+              <div className="text-xs text-gray-500 px-2 py-4">
+                No time-series data for current filters.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Map (no clipping: overflow-visible; ensure stacking context: relative) */}
-      <div
-        ref={containerRef}
-        className="relative h-[430px] rounded-xl border overflow-visible"
-        style={{ backgroundColor: "#0f172a" }}
-      />
+      {/* MAP + RIGHT SIDEBAR (tables) */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        {/* Map column spans 2 on xl */}
+        <div className="xl:col-span-2">
+          <div
+            ref={containerRef}
+            className="relative h-[480px] rounded-xl border overflow-visible"
+            style={{ backgroundColor: "#0f172a" }}
+          />
+        </div>
 
-      {/* Tables */}
+        {/* Right sidebar: two tables (Service & Grid) */}
+        <div className="space-y-4">
+          {/* ServiceTitle-wise counts */}
+          <div className="border rounded-xl shadow-sm overflow-hidden">
+            <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
+              ServiceTitle — complaints count ({svcCounts.length})
+            </div>
+            <div className="overflow-auto" style={{ maxHeight: 240 }}>
+              <table className="min-w-full text-sm">
+                <thead className="sticky top-0 bg-slate-100">
+                  <tr>
+                    <th className="text-left p-2">ServiceTitle</th>
+                    <th className="text-right p-2">Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {svcCounts.map((r, i) => (
+                    <tr
+                      key={(r.SERVICETITLE ?? "—") + i}
+                      className={i % 2 ? "bg-white" : "bg-slate-50"}
+                    >
+                      <td className="p-2">{r.SERVICETITLE ?? "—"}</td>
+                      <td className="p-2 text-right">
+                        {fmtN(r.complaints_count)}
+                      </td>
+                    </tr>
+                  ))}
+                  {!svcCounts.length && (
+                    <tr>
+                      <td className="p-2 text-gray-500" colSpan={2}>
+                        No data for current filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Grid-wise counts */}
+          <div className="border rounded-xl shadow-sm overflow-hidden">
+            <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
+              Grid — complaints count ({gridCounts.length})
+            </div>
+            <div className="overflow-auto" style={{ maxHeight: 240 }}>
+              <table className="min-w-full text-sm">
+                <thead className="sticky top-0 bg-slate-100">
+                  <tr>
+                    <th className="text-left p-2">Grid</th>
+                    <th className="text-right p-2">Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gridCounts.map((r, i) => (
+                    <tr
+                      key={(r.Grid ?? "—") + i}
+                      className={i % 2 ? "bg-white" : "bg-slate-50"}
+                    >
+                      <td className="p-2">{r.Grid ?? "—"}</td>
+                      <td className="p-2 text-right">
+                        {fmtN(r.complaints_count)}
+                      </td>
+                    </tr>
+                  ))}
+                  {!gridCounts.length && (
+                    <tr>
+                      <td className="p-2 text-gray-500" colSpan={2}>
+                        No data for current filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* LOWER TABLES – Sites & Neighbors */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Sites Table */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
@@ -779,7 +986,7 @@ export default function ComplaintsGeoPage() {
                     key={n.NeighborSiteName ?? `${idx}`}
                     className="cursor-pointer hover:bg-blue-100"
                     style={{ height: rowH }}
-                    onClick={() => onNeighborRowClick(n)} // NEW: click + zoom + popup
+                    onClick={() => onNeighborRowClick(n)}
                   >
                     <td className="p-2">{n.NeighborSiteName}</td>
                     <td className="p-2 text-right">
