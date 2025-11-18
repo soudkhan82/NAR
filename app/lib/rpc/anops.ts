@@ -1,13 +1,14 @@
 import supabase from "@/app/config/supabase-config";
 
 export type ProjectName = string;
-export type SiteClass = "PGS" | "SB"; // NEW
+export type SiteClass = "PGS" | "SB" | "ALL"; // NEW: add ALL
 
 export interface FilterOptionsRow {
   SubRegion: string | null;
   District: string | null;
   Grid: string | null;
 }
+
 export interface SiteRow {
   SiteName: string;
   SITE_ID: string;
@@ -15,12 +16,15 @@ export interface SiteRow {
   District: string | null;
   Grid: string | null;
 }
+
 export interface TimeseriesRow {
   dt: string; // ISO date
   v2g: number | null;
   v3g: number | null;
   v4g: number | null;
+  voverall: number | null; // NEW
 }
+
 export interface SiteDetailRow {
   SiteName: string;
   ProjectName: string | null;
@@ -29,12 +33,17 @@ export interface SiteDetailRow {
   v2g: number | null;
   v3g: number | null;
   v4g: number | null;
+  voverall: number | null; // NEW
 }
+
 export interface AttemptStatusRow {
   dt: string; // ISO date
   attempted: number;
   resolved: number;
 }
+
+const toSiteClassParam = (siteClass?: SiteClass | null) =>
+  !siteClass || siteClass === "ALL" ? null : siteClass; // helper
 
 export async function fetchProjectNames(): Promise<ProjectName[]> {
   const { data, error } = await supabase.rpc("anops_project_names");
@@ -44,11 +53,11 @@ export async function fetchProjectNames(): Promise<ProjectName[]> {
 
 export async function fetchFilterOptions(
   projects: string[] | null,
-  siteClass: SiteClass | null = null // NEW
+  siteClass: SiteClass | null = null
 ): Promise<{ subregions: string[]; districts: string[]; grids: string[] }> {
   const { data, error } = await supabase.rpc("anops_filter_options", {
     p_projects: projects && projects.length ? projects : null,
-    p_site_class: siteClass ?? null, // NEW
+    p_site_class: toSiteClassParam(siteClass), // use helper
   });
   if (error) throw error;
   const subs = new Set<string>();
@@ -68,7 +77,7 @@ export async function fetchFilterOptions(
 
 export async function fetchSites(args: {
   projects: string[] | null;
-  siteClass?: SiteClass | null; // NEW
+  siteClass?: SiteClass | null;
   subregion?: string | null;
   district?: string | null;
   grid?: string | null;
@@ -77,7 +86,7 @@ export async function fetchSites(args: {
   if (!args.projects || args.projects.length === 0) return [];
   const { data, error } = await supabase.rpc("anops_sites", {
     p_projects: args.projects,
-    p_site_class: args.siteClass ?? null, // NEW
+    p_site_class: toSiteClassParam(args.siteClass),
     p_subregion: args.subregion ?? null,
     p_district: args.district ?? null,
     p_grid: args.grid ?? null,
@@ -89,7 +98,7 @@ export async function fetchSites(args: {
 
 export async function fetchSitesDetail(args: {
   projects: string[] | null;
-  siteClass?: SiteClass | null; // NEW
+  siteClass?: SiteClass | null;
   subregion?: string | null;
   district?: string | null;
   grid?: string | null;
@@ -100,7 +109,7 @@ export async function fetchSitesDetail(args: {
   if (!args.projects || args.projects.length === 0) return [];
   const { data, error } = await supabase.rpc("anops_sites_detail", {
     p_projects: args.projects,
-    p_site_class: args.siteClass ?? null, // NEW
+    p_site_class: toSiteClassParam(args.siteClass),
     p_subregion: args.subregion ?? null,
     p_district: args.district ?? null,
     p_grid: args.grid ?? null,
@@ -114,7 +123,7 @@ export async function fetchSitesDetail(args: {
 
 export async function fetchAttemptStatus(args: {
   projects: string[] | null;
-  siteClass?: SiteClass | null; // NEW
+  siteClass?: SiteClass | null;
   subregion?: string | null;
   district?: string | null;
   grid?: string | null;
@@ -124,7 +133,7 @@ export async function fetchAttemptStatus(args: {
   if (!args.projects || args.projects.length === 0) return [];
   const { data, error } = await supabase.rpc("anops_attempt_status_by_date", {
     p_projects: args.projects,
-    p_site_class: args.siteClass ?? null, // NEW
+    p_site_class: toSiteClassParam(args.siteClass),
     p_subregion: args.subregion ?? null,
     p_district: args.district ?? null,
     p_grid: args.grid ?? null,
@@ -140,7 +149,7 @@ export async function fetchTimeseries(args: {
   dateTo?: string | null; // yyyy-mm-dd
   projects: string[] | null;
   site?: string | null; // SiteName / SITE_ID
-  siteClass?: SiteClass | null; // NEW
+  siteClass?: SiteClass | null;
   subregion?: string | null;
   district?: string | null;
   grid?: string | null;
@@ -151,7 +160,7 @@ export async function fetchTimeseries(args: {
     p_date_to: args.dateTo ?? null,
     p_projects: args.projects,
     p_site: args.site ?? null,
-    p_site_class: args.siteClass ?? null, // NEW
+    p_site_class: toSiteClassParam(args.siteClass),
     p_subregion: args.subregion ?? null,
     p_district: args.district ?? null,
     p_grid: args.grid ?? null,

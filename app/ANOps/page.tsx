@@ -16,7 +16,7 @@ import {
 } from "recharts";
 
 /* ---------------- Types (mirror your RPC shapes) ---------------- */
-type SiteClass = "PGS" | "SB";
+type SiteClass = "PGS" | "SB" | "ALL";
 
 type SiteRow = { SubRegion: string | null };
 type SiteDetailRow = {
@@ -27,12 +27,14 @@ type SiteDetailRow = {
   v2g: number | null;
   v3g: number | null;
   v4g: number | null;
+  voverall: number | null; // NEW
 };
 type TimeseriesRow = {
   dt: string;
   v2g?: number | null;
   v3g?: number | null;
   v4g?: number | null;
+  voverall?: number | null; // NEW
 };
 type AttemptStatusRow = {
   dt: string;
@@ -113,9 +115,21 @@ async function loadRpc(): Promise<RpcModule> {
 /* ---------------- Helpers ---------------- */
 const DEFAULT_SUBREGION = "South-1";
 
+const computeOverall = (
+  v2g: number | null | undefined,
+  v3g: number | null | undefined,
+  v4g: number | null | undefined
+): number | null => {
+  const vals = [v2g, v3g, v4g].filter(
+    (x): x is number => typeof x === "number" && Number.isFinite(x)
+  );
+  if (!vals.length) return null;
+  return vals.reduce((s, x) => s + x, 0) / vals.length;
+};
+
 const emptyFilters: FilterState = {
   projects: [],
-  siteClass: "PGS",
+  siteClass: "ALL", // NEW: default to ALL, you can change back to "PGS" if desired
   subregion: DEFAULT_SUBREGION,
   district: null,
   grid: null,
@@ -130,16 +144,18 @@ const pct = (n: number | null | undefined) =>
 
 const heat = (
   v: number | null | undefined,
-  tech: "2g" | "3g" | "4g"
+  tech: "2g" | "3g" | "4g" | "overall" // NEW
 ): string => {
   if (typeof v !== "number" || !Number.isFinite(v)) return "transparent";
   const val = Math.max(0, Math.min(100, v));
   const rgb =
     tech === "2g"
-      ? [37, 99, 235]
+      ? [37, 99, 235] // blue
       : tech === "3g"
-      ? [5, 150, 105]
-      : [245, 158, 11];
+      ? [5, 150, 105] // green
+      : tech === "4g"
+      ? [245, 158, 11] // amber
+      : [139, 92, 246]; // overall: violet
   const alpha = 0.08 + (val / 100) * 0.22;
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
 };
@@ -293,7 +309,7 @@ export default function Page() {
   }, [filters]);
 
   /* ---------------- Derived ---------------- */
-  const { avg2g, avg3g, avg4g } = useMemo(() => {
+  const { avg2g, avg3g, avg4g, avgOverall } = useMemo(() => {
     const v2 = ts
       .map((r) => (typeof r.v2g === "number" ? r.v2g : null))
       .filter((n): n is number => n !== null);
@@ -303,9 +319,17 @@ export default function Page() {
     const v4 = ts
       .map((r) => (typeof r.v4g === "number" ? r.v4g : null))
       .filter((n): n is number => n !== null);
+    const vo = ts
+      .map((r) => (typeof r.voverall === "number" ? r.voverall : null))
+      .filter((n): n is number => n !== null);
     const mean = (a: number[]) =>
       a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
-    return { avg2g: mean(v2), avg3g: mean(v3), avg4g: mean(v4) };
+    return {
+      avg2g: mean(v2),
+      avg3g: mean(v3),
+      avg4g: mean(v4),
+      avgOverall: mean(vo),
+    };
   }, [ts]);
 
   const attemptsTotal = useMemo(
@@ -358,6 +382,9 @@ export default function Page() {
     setFilters((f) => ({ ...f, [key]: val, site: null }));
   };
 
+  const setSiteClass = (val: SiteClass) =>
+    setFilters((f) => ({ ...f, siteClass: val, site: null }));
+
   /* ---------------- UI ---------------- */
   return (
     <div className="p-4 space-y-5 bg-gradient-to-b from-white to-slate-50">
@@ -390,30 +417,36 @@ export default function Page() {
           </button>
         </div>
 
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-600">SiteClassification:</span>
-          <div className="inline-flex rounded-lg border bg-white shadow-sm overflow-hidden">
+          <div className="inline-flex rounded-lg border bg-white shadow-sm overflow-hidden text-xs">
             <button
-              className={`px-3 py-1.5 text-xs ${
+              className={`px-3 py-1.5 ${
+                filters.siteClass === "ALL"
+                  ? "bg-indigo-600 text-white"
+                  : "hover:bg-slate-50"
+              }`}
+              onClick={() => setSiteClass("ALL")}
+            >
+              All
+            </button>
+            <button
+              className={`px-3 py-1.5 border-l ${
                 filters.siteClass === "PGS"
                   ? "bg-indigo-600 text-white"
                   : "hover:bg-slate-50"
               }`}
-              onClick={() =>
-                setFilters((f) => ({ ...f, siteClass: "PGS", site: null }))
-              }
+              onClick={() => setSiteClass("PGS")}
             >
               PGS (Platinum/Gold/Strategic)
             </button>
             <button
-              className={`px-3 py-1.5 text-xs border-l ${
+              className={`px-3 py-1.5 border-l ${
                 filters.siteClass === "SB"
                   ? "bg-indigo-600 text-white"
                   : "hover:bg-slate-50"
               }`}
-              onClick={() =>
-                setFilters((f) => ({ ...f, siteClass: "SB", site: null }))
-              }
+              onClick={() => setSiteClass("SB")}
             >
               SB (Silver/Bronze)
             </button>
@@ -517,7 +550,15 @@ export default function Page() {
       </section>
 
       {/* KPI Cards */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+            Net Overall (2G/3G/4G)
+          </div>
+          <div className="mt-1 text-2xl font-semibold text-violet-700">
+            {pct(avgOverall)}
+          </div>
+        </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="text-[11px] uppercase tracking-wide text-slate-500">
             Net Average 2G
@@ -564,15 +605,16 @@ export default function Page() {
           </div>
 
           <div className="border rounded-lg max-h-[480px] overflow-y-auto overflow-x-auto">
-            <table className="w-full table-fixed text-xs min-w-[900px]">
+            <table className="w-full table-fixed text-xs min-w-[1000px]">
               <colgroup>
-                <col className="w-[14.285%]" />
-                <col className="w-[14.285%]" />
-                <col className="w-[14.285%]" />
-                <col className="w-[14.285%]" />
-                <col className="w-[14.285%]" />
-                <col className="w-[14.285%]" />
-                <col className="w-[14.285%]" />
+                <col className="w-[12.5%]" />
+                <col className="w-[12.5%]" />
+                <col className="w-[12.5%]" />
+                <col className="w-[12.5%]" />
+                <col className="w-[12.5%]" />
+                <col className="w-[12.5%]" />
+                <col className="w-[12.5%]" />
+                <col className="w-[12.5%]" />
               </colgroup>
 
               <thead className="sticky top-0 bg-slate-50/95 backdrop-blur z-10">
@@ -584,6 +626,7 @@ export default function Page() {
                   <th className="p-2 text-right">2G</th>
                   <th className="p-2 text-right">3G</th>
                   <th className="p-2 text-right">4G</th>
+                  <th className="p-2 text-right">Overall</th>
                 </tr>
               </thead>
               <tbody>
@@ -628,11 +671,28 @@ export default function Page() {
                     >
                       {pct(r.v4g)}
                     </td>
+                    <td
+                      className="p-2 text-right whitespace-nowrap font-medium rounded"
+                      style={{
+                        background: heat(
+                          typeof r.voverall === "number"
+                            ? r.voverall
+                            : computeOverall(r.v2g, r.v3g, r.v4g),
+                          "overall"
+                        ),
+                      }}
+                    >
+                      {pct(
+                        typeof r.voverall === "number"
+                          ? r.voverall
+                          : computeOverall(r.v2g, r.v3g, r.v4g)
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td className="p-4" colSpan={7}>
+                    <td className="p-4" colSpan={8}>
                       {loading ? "Loading…" : "No rows found"}
                     </td>
                   </tr>
@@ -701,6 +761,14 @@ export default function Page() {
                     name="4G"
                     dot={false}
                     stroke="#f59e0b"
+                    strokeWidth={2}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="voverall"
+                    name="Overall"
+                    dot={false}
+                    stroke="#8b5cf6"
                     strokeWidth={2}
                   />
                 </LineChart>
