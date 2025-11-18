@@ -129,7 +129,7 @@ const computeOverall = (
 
 const emptyFilters: FilterState = {
   projects: [],
-  siteClass: "ALL", // NEW: default to ALL, you can change back to "PGS" if desired
+  siteClass: "ALL", // default to ALL
   subregion: DEFAULT_SUBREGION,
   district: null,
   grid: null,
@@ -144,7 +144,7 @@ const pct = (n: number | null | undefined) =>
 
 const heat = (
   v: number | null | undefined,
-  tech: "2g" | "3g" | "4g" | "overall" // NEW
+  tech: "2g" | "3g" | "4g" | "overall"
 ): string => {
   if (typeof v !== "number" || !Number.isFinite(v)) return "transparent";
   const val = Math.max(0, Math.min(100, v));
@@ -209,7 +209,7 @@ export default function Page() {
     })();
   }, []);
 
-  // Options; lock subregion to South-1 if available
+  // Options; respect "All" (subregion = null)
   useEffect(() => {
     (async () => {
       const rpc = await getRpc();
@@ -219,6 +219,12 @@ export default function Page() {
       );
       setOpts(o);
       setFilters((f) => {
+        // If user explicitly chose All (null), keep it
+        if (f.subregion === null) {
+          return { ...f, site: null };
+        }
+
+        // If subregion is non-null but not in the latest list, pick a safe default
         if (!f.subregion || !o.subregions.includes(f.subregion)) {
           const next = o.subregions.includes(DEFAULT_SUBREGION)
             ? DEFAULT_SUBREGION
@@ -480,6 +486,8 @@ export default function Page() {
             value={filters.subregion ?? ""}
             onChange={(e) => onPick("subregion", e.target.value || null)}
           >
+            {/* explicit All option */}
+            <option value="">All</option>
             {opts.subregions.includes(DEFAULT_SUBREGION) && (
               <option value={DEFAULT_SUBREGION}>
                 {DEFAULT_SUBREGION} (default)
@@ -492,7 +500,6 @@ export default function Page() {
                   {s}
                 </option>
               ))}
-            {!opts.subregions.length && <option value="">All</option>}
           </select>
         </div>
         <div>
