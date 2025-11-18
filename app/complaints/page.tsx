@@ -56,6 +56,8 @@ const CHART_HEIGHT = 200;
 
 const fmtN = (n: number | null | undefined) =>
   typeof n === "number" ? n.toLocaleString() : "—";
+const fmtAvail = (v: number | null | undefined) =>
+  typeof v === "number" ? (v * 100).toFixed(2) : "—";
 
 const toBigint = (siteNameText: string): number | null => {
   const n = Number(siteNameText);
@@ -656,6 +658,16 @@ export default function ComplaintsGeoPage() {
     void loadRightScoped();
   }, [loadRightScoped]);
 
+  const totalSvcComplaints = useMemo(
+    () => svcCounts.reduce((sum, r) => sum + (r.complaints_count ?? 0), 0),
+    [svcCounts]
+  );
+
+  const totalGridComplaints = useMemo(
+    () => gridCounts.reduce((sum, r) => sum + (r.complaints_count ?? 0), 0),
+    [gridCounts]
+  );
+
   /** Build 4 service-wise line series from tsAll (respecting weekWindow) */
   type ServiceSeries = {
     service: string;
@@ -899,7 +911,10 @@ export default function ComplaintsGeoPage() {
           {/* ServiceTitle-wise counts */}
           <div className="border rounded-xl shadow-sm overflow-hidden">
             <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
-              ServiceTitle — complaints count ({svcCounts.length})
+              ServiceTitle — total complaints: {fmtN(totalSvcComplaints)}{" "}
+              <span className="text-xs text-slate-300">
+                ({svcCounts.length.toLocaleString()} rows)
+              </span>
             </div>
             <div className="overflow-auto" style={{ maxHeight: 240 }}>
               <table className="min-w-full text-sm">
@@ -936,7 +951,10 @@ export default function ComplaintsGeoPage() {
           {/* Grid-wise counts */}
           <div className="border rounded-xl shadow-sm overflow-hidden">
             <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
-              Grid — complaints count ({gridCounts.length})
+              Grid — total complaints: {fmtN(totalGridComplaints)}{" "}
+              <span className="text-xs text-slate-300">
+                ({gridCounts.length.toLocaleString()} rows)
+              </span>
             </div>
             <div className="overflow-auto" style={{ maxHeight: 240 }}>
               <table className="min-w-full text-sm">
@@ -1053,11 +1071,13 @@ export default function ComplaintsGeoPage() {
                 <tr>
                   <th className="text-left p-2">Neighbor SiteName</th>
                   <th className="text-right p-2">Distance (km)</th>
+                  <th className="text-right p-2">Overall Avail</th>
                   <th className="text-left p-2">District</th>
                   <th className="text-left p-2">Grid</th>
                   <th className="text-left p-2">Address</th>
                 </tr>
               </thead>
+
               <tbody>
                 {filteredNeighbors.map((n, idx) => (
                   <tr
@@ -1072,6 +1092,11 @@ export default function ComplaintsGeoPage() {
                         ? n.distance_km.toFixed(2)
                         : "—"}
                     </td>
+                    <td className="p-2 text-right">
+                      {typeof n.latest_overall === "number"
+                        ? `${fmtAvail(n.latest_overall)}%`
+                        : "—"}
+                    </td>
                     <td className="p-2">{n.District ?? ""}</td>
                     <td className="p-2">{n.Grid ?? ""}</td>
                     <td className="p-2">{n.Address ?? ""}</td>
@@ -1079,7 +1104,7 @@ export default function ComplaintsGeoPage() {
                 ))}
                 {!filteredNeighbors.length && (
                   <tr>
-                    <td className="p-2 text-gray-500" colSpan={5}>
+                    <td className="p-2 text-gray-500" colSpan={6}>
                       {neighbors.length
                         ? "No neighbors match your search."
                         : "Select a site to see neighbors…"}

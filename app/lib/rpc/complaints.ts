@@ -27,10 +27,11 @@ export interface NeighborRow {
   NeighborSiteName: string;
   Latitude: number | null;
   Longitude: number | null;
-  District: string | null; // <-- NEW
-  Grid: string | null; // <-- NEW
-  Address: string | null; // <-- NEW
+  District: string | null;
+  Grid: string | null;
+  Address: string | null;
   distance_km: number;
+  latest_overall: number | null; // <-- NEW
 }
 
 // ===== NEW TYPES =====
@@ -235,5 +236,3 @@ export async function fetchCountsByGrid(params: {
   if (error) throw explainError(error);
   return (data ?? []) as GridCountRow[];
 }
-
-
