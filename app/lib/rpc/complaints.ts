@@ -201,12 +201,16 @@ export async function fetchCountsByService(params: {
   subregion: string | null;
   district: string | null;
   grid: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
 }): Promise<ServiceCountRow[]> {
   const { data, error } = await supabase.rpc("complaints_counts_by_service", {
     p_region: params.region,
     p_subregion: params.subregion,
     p_district: params.district,
     p_grid: params.grid,
+    p_date_from: params.dateFrom ?? null,
+    p_date_to: params.dateTo ?? null,
   });
   if (error) throw explainError(error);
   return (data ?? []) as ServiceCountRow[];
@@ -217,13 +221,19 @@ export async function fetchCountsByGrid(params: {
   subregion: string | null;
   district: string | null;
   grid: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
 }): Promise<GridCountRow[]> {
   const { data, error } = await supabase.rpc("complaints_counts_by_grid", {
     p_region: params.region,
     p_subregion: params.subregion,
     p_district: params.district,
     p_grid: params.grid,
+    p_date_from: params.dateFrom ?? null,
+    p_date_to: params.dateTo ?? null,
   });
   if (error) throw explainError(error);
   return (data ?? []) as GridCountRow[];
 }
+
+

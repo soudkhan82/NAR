@@ -46,6 +46,9 @@ import {
 type SiteAggRow = RpcSiteAggRow;
 type NeighborRow = RpcNeighborRow;
 
+// WEEK FILTER: allowed week windows for charts & tables
+type WeekWindow = "all" | "4" | "8" | "12" | "24";
+
 /* ================= Helpers ================= */
 const POPUP_WIDTH = 380; // click-popup width
 const POPUP_MAX_HEIGHT = 420; // click-popup max height
@@ -80,12 +83,33 @@ const complaintsColor = (count: number | null | undefined): string => {
 /** Distinct colors for the 4 service charts */
 const SERVICE_COLORS = ["#ef4444", "#f97316", "#22c55e", "#3b82f6"] as const;
 
+/** Build date range (yyyy-mm-dd) from selected week window for counts tables */
+const buildDateRangeFromWeekWindow = (
+  weekWindow: WeekWindow
+): { dateFrom: string | null; dateTo: string | null } => {
+  if (weekWindow === "all") {
+    return { dateFrom: null, dateTo: null };
+  }
+
+  const weeks = Number(weekWindow);
+  const today = new Date(); // simple local date; no need to overcomplicate
+  const to = new Date(today);
+  const from = new Date(today);
+  from.setDate(to.getDate() - weeks * 7 + 1);
+
+  const fmt = (d: Date) => d.toISOString().slice(0, 10); // yyyy-mm-dd
+  return { dateFrom: fmt(from), dateTo: fmt(to) };
+};
+
 export default function ComplaintsGeoPage() {
   /** Filters */
   const [region, setRegion] = useState<string>("South");
   const [subRegion, setSubRegion] = useState<string | null>(null);
   const [district, setDistrict] = useState<string | null>(null);
   const [grid, setGrid] = useState<string | null>(null);
+
+  // WEEK FILTER: UI state for week window (affects charts + counts tables)
+  const [weekWindow, setWeekWindow] = useState<WeekWindow>("all");
 
   /** Picklists */
   const [regions, setRegions] = useState<string[]>([]);
@@ -594,19 +618,29 @@ export default function ComplaintsGeoPage() {
   /* ---------------- RIGHT-SCOPED DATA (Top 4 service charts + tables) ---------------- */
   const loadRightScoped = useCallback(async () => {
     try {
-      const args = {
+      const argsBase = {
         region: region ?? null,
         subregion: subRegion ?? null,
         district: district ?? null,
         grid: grid ?? null,
       };
+
+      // 1) Always fetch the full filter-scoped timeseries (for charts)
+      const tsPromise = fetchTimeseriesAll(argsBase);
+
+      // 2) Build date range from weekWindow for the counts tables
+      const { dateFrom, dateTo } = buildDateRangeFromWeekWindow(weekWindow);
+
+      // 3) Fetch counts WITH the same week window
       const [tsA, svc, grd] = await Promise.all([
-        fetchTimeseriesAll(args),
-        fetchCountsByService(args),
-        fetchCountsByGrid(args),
+        tsPromise,
+        fetchCountsByService({ ...argsBase, dateFrom, dateTo }),
+        fetchCountsByGrid({ ...argsBase, dateFrom, dateTo }),
       ]);
+
       svc.sort((a, b) => (b.complaints_count ?? 0) - (a.complaints_count ?? 0));
       grd.sort((a, b) => (b.complaints_count ?? 0) - (a.complaints_count ?? 0));
+
       setTsAll(tsA);
       setSvcCounts(svc);
       setGridCounts(grd);
@@ -616,13 +650,13 @@ export default function ComplaintsGeoPage() {
       setSvcCounts([]);
       setGridCounts([]);
     }
-  }, [region, subRegion, district, grid]);
+  }, [region, subRegion, district, grid, weekWindow]);
 
   useEffect(() => {
     void loadRightScoped();
   }, [loadRightScoped]);
 
-  /** Build 4 service-wise line series from tsAll */
+  /** Build 4 service-wise line series from tsAll (respecting weekWindow) */
   type ServiceSeries = {
     service: string;
     points: TsAggRow[];
@@ -631,6 +665,23 @@ export default function ComplaintsGeoPage() {
 
   const topServiceSeries: ServiceSeries[] = useMemo(() => {
     if (!tsAll.length) return [];
+
+    // WEEK FILTER: compute cutoff date based on selected week window
+    let cutoffDate: Date | null = null;
+    if (weekWindow !== "all") {
+      const weeks = Number(weekWindow);
+      // find max date present in tsAll
+      let maxDate: Date | null = null;
+      for (const row of tsAll) {
+        const d = new Date(row.d);
+        if (!maxDate || d > maxDate) maxDate = d;
+      }
+      if (maxDate) {
+        const c = new Date(maxDate);
+        c.setDate(c.getDate() - weeks * 7 + 1);
+        cutoffDate = c;
+      }
+    }
 
     const grouped = new Map<string, TsAggRow[]>();
     tsAll.forEach((row) => {
@@ -642,16 +693,27 @@ export default function ComplaintsGeoPage() {
 
     const series: ServiceSeries[] = [];
     grouped.forEach((rows, key) => {
-      const total = rows.reduce((sum, r) => sum + (r.complaints_count ?? 0), 0);
+      // WEEK FILTER: optionally filter rows by cutoffDate
+      const filteredRows =
+        cutoffDate === null
+          ? rows
+          : rows.filter((r) => new Date(r.d) >= cutoffDate);
+
+      if (!filteredRows.length) return;
+
+      const total = filteredRows.reduce(
+        (sum, r) => sum + (r.complaints_count ?? 0),
+        0
+      );
       // sort each series by date
-      rows.sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1));
-      series.push({ service: key, points: rows, total });
+      filteredRows.sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1));
+      series.push({ service: key, points: filteredRows, total });
     });
 
     // Sort by total complaints desc and take top 4
     series.sort((a, b) => b.total - a.total);
     return series.slice(0, 4);
-  }, [tsAll]);
+  }, [tsAll, weekWindow]);
 
   /* ---------------- Tables (scroll 10 rows) ---------------- */
   const rowH = 44;
@@ -682,7 +744,7 @@ export default function ComplaintsGeoPage() {
       {/* TOP ROW – Filters + 4 ServiceTitle Time-series Charts */}
       <div className="space-y-3">
         {/* Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <label className="flex flex-col text-sm">
             <span className="mb-1">Region</span>
             <select
@@ -746,10 +808,26 @@ export default function ComplaintsGeoPage() {
             </select>
           </label>
 
+          {/* WEEK FILTER: Week window selector */}
+          <label className="flex flex-col text-sm">
+            <span className="mb-1">Weeks (charts &amp; tables)</span>
+            <select
+              className="border rounded px-2 py-1"
+              value={weekWindow}
+              onChange={(e) => setWeekWindow(e.target.value as WeekWindow)}
+            >
+              <option value="all">All</option>
+              <option value="4">Last 4 weeks</option>
+              <option value="8">Last 8 weeks</option>
+              <option value="12">Last 12 weeks</option>
+              <option value="24">Last 24 weeks</option>
+            </select>
+          </label>
+
           <div className="flex items-end">
             <button
               type="button"
-              className="border rounded px-3 py-2 text-sm"
+              className="border rounded px-3 py-2 text-sm w-full"
               onClick={() => void loadSites()}
             >
               Refresh
@@ -798,7 +876,7 @@ export default function ComplaintsGeoPage() {
             })}
             {!topServiceSeries.length && (
               <div className="text-xs text-gray-500 px-2 py-4">
-                No time-series data for current filters.
+                No time-series data for current filters / week window.
               </div>
             )}
           </div>
@@ -846,7 +924,7 @@ export default function ComplaintsGeoPage() {
                   {!svcCounts.length && (
                     <tr>
                       <td className="p-2 text-gray-500" colSpan={2}>
-                        No data for current filters.
+                        No data for current filters / week window.
                       </td>
                     </tr>
                   )}
@@ -883,7 +961,7 @@ export default function ComplaintsGeoPage() {
                   {!gridCounts.length && (
                     <tr>
                       <td className="p-2 text-gray-500" colSpan={2}>
-                        No data for current filters.
+                        No data for current filters / week window.
                       </td>
                     </tr>
                   )}
