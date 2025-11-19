@@ -1,467 +1,197 @@
+// app/home/page.tsx
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import Image from "next/image";
 import { motion } from "framer-motion";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Calendar } from "@/components/ui/calendar";
-import { Separator } from "@/components/ui/separator";
-import {
-  CalendarDays,
-  MapPin,
-  BarChart3,
-  BellRing,
-  MessageSquare,
-} from "lucide-react";
+import { useMemo } from "react";
 
-/* ---------------- Types (local) ---------------- */
-type Region = "North" | "Central" | "South" | "Nationwide";
-type Frequency = "Daily" | "Weekly" | "Monthly";
+// Feel free to swap images with your own assets or CDN
+const TILES = [
+  {
+    key: "GIS",
+    href: "/GIS/",
+    title: "Geospatial - Analysis",
+    subtitle: "Geographical insights",
+    img: "/images/avail.jpg",
+  },
+  {
+    key: "Cell utilization",
+    href: "/CU",
+    title: "EUTRAN",
+    subtitle: "High-utilization insights",
+    img: "/images/highU.jpg",
+  },
 
-interface FiltersState {
-  region: Region;
-  frequency: Frequency;
-  asOf?: Date; // single date selector
-}
+  {
+    key: "eas",
+    href: "/eas",
+    title: "EAS",
+    subtitle: "Energy & power dashboard",
+    img: "/images/eas.jpg",
+  },
+  {
+    key: "isp",
+    href: "/isp",
+    title: "ISP",
+    subtitle: "Internet service KPIs",
+    img: "/images/digital.jpg",
+  },
+  {
+    key: "availability",
+    href: "/Availability",
+    title: "Availability",
+    subtitle: "Site uptime & trends",
+    img: "/images/avail.jpg",
+  },
+  // NEW: ANOps tile
+  {
+    key: "anops",
+    href: "/ANOps",
+    title: "Access Network Operations",
+    subtitle: "Acceptance & Network Ops",
+    img: "/images/digital.jpg", // from public/image/digital.jpg
+  },
+  {
+    key: "Complaints",
+    href: "/complaints",
+    title: "Complaints",
+    subtitle: "Level-3 Engineering Complaints",
+    img: "/images/complaint.avif",
+  },
+  {
+    key: "PS Core",
+    href: "/PSCore",
+    title: "Packet Switched Core",
+    subtitle: "Users & Traffic",
+    img: "/images/pscore.avif",
+  },
+  {
+    key: "traffic",
+    href: "/traffic",
+    title: "Traffic",
+    subtitle: "Voice & data loads",
+    img: "/images/traffic.jpg",
+  },
+  {
+    key: "lpa",
+    href: "/Lpa",
+    title: "LPA",
+    subtitle: "Power alarms & aging",
+    img: "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=1600&auto=format&fit=crop",
+  },
+] as const;
 
-/* ---------------- Helpers ---------------- */
-const fmtDate = (d?: Date) =>
-  d
-    ? d.toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      })
-    : "—";
-
-// format as YYYY-MM-DD from the chosen date
-const toLocalISO = (d?: Date) => {
-  if (!d) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
-
-/* ---------------- Component ---------------- */
-export default function HomeDashboardPage() {
-  const router = useRouter();
-
-  const [filters, setFilters] = useState<FiltersState>({
-    region: "Nationwide",
-    frequency: "Daily",
-    asOf: undefined,
-  });
-
-  // Max selectable date = yesterday
-  const maxDate = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    d.setHours(0, 0, 0, 0);
-    return d;
+export default function HomeLanding() {
+  const rows = useMemo(() => {
+    // 2 rows on xl, 1 row on small, auto on medium
+    return TILES;
   }, []);
 
-  const canApply = !!filters.asOf;
-
-  // Navigate with plain YYYY-MM-DD selected date
-  const goAvailabilityReports = (): void => {
-    const qs = new URLSearchParams({
-      region: filters.region,
-      freq: filters.frequency,
-      asOf: toLocalISO(filters.asOf),
-    });
-    router.push(`/Availability?${qs.toString()}`);
-  };
-
   return (
-    <div className="min-h-screen bg-black text-neutral-100 antialiased">
-      <div className="pointer-events-none fixed inset-0 [mask-image:radial-gradient(45rem_30rem_at_20%_20%,black,transparent)]">
-        <div className="absolute -top-24 -left-24 size-[28rem] rounded-full bg-emerald-500/10 blur-3xl" />
-      </div>
-
-      <main className="mx-auto max-w-7xl px-3 sm:px-4 py-6">
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-          className="mb-4 rounded-xl bg-gradient-to-r from-neutral-900 via-neutral-950 to-neutral-900 border border-neutral-800/60 px-4 py-3 shadow-[0_0_0_1px_rgba(38,38,38,0.6)]"
-        >
-          <div className="flex items-center gap-2 text-sm text-neutral-300">
-            <BarChart3 className="h-5 w-5 text-emerald-400" />
-            <span className="font-medium tracking-wide">
-              Network Reporting — Home
-            </span>
-          </div>
-        </motion.div>
-
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-          {/* Calendar Card */}
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.35, ease: "easeOut" }}
-            className="md:col-span-4"
-          >
-            <Card className="rounded-2xl border border-neutral-800/70 bg-neutral-950/70 backdrop-blur-sm shadow-[0_0_0_1px_rgba(38,38,38,0.6)]">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2 text-neutral-200">
-                  <CalendarDays className="h-4 w-4 text-emerald-400" /> As of
-                  Date
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-2 max-w-[270px]">
-                  <Calendar
-                    mode="single"
-                    selected={filters.asOf}
-                    onSelect={(d: Date | undefined) =>
-                      setFilters((f): FiltersState => ({ ...f, asOf: d }))
-                    }
-                    defaultMonth={maxDate}
-                    disabled={{ after: maxDate }}
-                    numberOfMonths={1}
-                    className="w-fit"
-                    classNames={{
-                      months: "flex flex-col space-y-1",
-                      month: "space-y-1",
-                      caption:
-                        "flex justify-center pt-0.5 relative items-center text-[11px] leading-tight text-neutral-200",
-                      caption_label: "text-[11px] font-semibold tracking-wide",
-                      nav: "space-x-1 flex items-center",
-                      nav_button:
-                        "h-7 w-7 rounded-md bg-neutral-800 text-neutral-200 p-0 opacity-95 hover:opacity-100 hover:ring-1 hover:ring-emerald-500/60 transition",
-                      table: "w-full border-collapse",
-                      head_row: "grid grid-cols-7",
-                      head_cell:
-                        "text-neutral-300 text-[10px] w-8 py-1 font-medium",
-                      row: "grid grid-cols-7 mt-1 gap-y-1",
-                      cell: "relative p-0 text-center text-[12px]",
-                      day: "h-8 w-8 rounded-md p-0 font-medium text-neutral-100 aria-selected:opacity-100 hover:bg-neutral-800 hover:text-neutral-50 transition",
-                      day_selected:
-                        "bg-emerald-500 text-black hover:bg-emerald-400",
-                      day_today:
-                        "text-neutral-100 outline outline-1 outline-emerald-500/70",
-                      day_outside: "text-neutral-500 opacity-70",
-                      day_disabled:
-                        "text-neutral-600 opacity-50 cursor-not-allowed",
-                    }}
-                    initialFocus
-                  />
-                </div>
-                <div className="mt-2 text-[11px] text-neutral-400">
-                  Max: {fmtDate(maxDate)}
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          {/* Controls + Sections Card */}
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.35, ease: "easeOut", delay: 0.05 }}
-            className="md:col-span-8"
-          >
-            <Card className="rounded-2xl border border-neutral-800/70 bg-neutral-950/70 backdrop-blur-sm shadow-[0_0_0_1px_rgba(38,38,38,0.6)]">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <BarChart3 className="h-5 w-5 text-emerald-400" />
-                    <CardTitle className="text-base text-neutral-200">
-                      Network Reporting – Home
-                    </CardTitle>
-                  </div>
-                  <div className="hidden md:flex text-xs text-neutral-400 gap-2">
-                    <span className="rounded-full border border-neutral-800 px-2 py-0.5 bg-neutral-900/60">
-                      Region:{" "}
-                      <span className="text-neutral-200">{filters.region}</span>
-                    </span>
-                    <span className="rounded-full border border-neutral-800 px-2 py-0.5 bg-neutral-900/60">
-                      Frequency:{" "}
-                      <span className="text-neutral-200">
-                        {filters.frequency}
-                      </span>
-                    </span>
-                    <span className="rounded-full border border-neutral-800 px-2 py-0.5 bg-neutral-900/60">
-                      As of:{" "}
-                      <span className="text-neutral-200">
-                        {fmtDate(filters.asOf)}
-                      </span>
-                    </span>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Controls row */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                  {/* Region */}
-                  <div className="md:col-span-5">
-                    <Label className="mb-1 inline-flex items-center gap-2 text-neutral-300">
-                      <MapPin className="h-4 w-4 text-emerald-400" />
-                      Region
-                    </Label>
-                    <Select
-                      value={filters.region}
-                      onValueChange={(v: string) =>
-                        setFilters(
-                          (f): FiltersState => ({
-                            ...f,
-                            region: v as Region,
-                          })
-                        )
-                      }
-                    >
-                      <SelectTrigger className="h-10 w-full rounded-lg border-neutral-800 bg-neutral-900 text-neutral-200 hover:bg-neutral-800 transition">
-                        <SelectValue placeholder="Select region" />
-                      </SelectTrigger>
-                      <SelectContent className="border-neutral-800 bg-neutral-900 text-neutral-100">
-                        <SelectItem value="North">North</SelectItem>
-                        <SelectItem value="Central">Central</SelectItem>
-                        <SelectItem value="South">South</SelectItem>
-                        <SelectItem value="Nationwide">Nationwide</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Frequency */}
-                  <div className="md:col-span-5">
-                    <Label className="mb-1 block text-neutral-300">
-                      Report Frequency
-                    </Label>
-                    <Tabs
-                      value={filters.frequency}
-                      onValueChange={(v: string) =>
-                        setFilters(
-                          (f): FiltersState => ({
-                            ...f,
-                            frequency: v as Frequency,
-                          })
-                        )
-                      }
-                    >
-                      <TabsList className="grid grid-cols-3 h-10 rounded-lg border border-neutral-800 bg-neutral-900">
-                        <TabsTrigger
-                          className="px-2 py-1 text-xs data-[state=active]:bg-emerald-500 data-[state=active]:text-black hover:bg-neutral-800 transition"
-                          value="Daily"
-                        >
-                          Daily
-                        </TabsTrigger>
-                        <TabsTrigger
-                          className="px-2 py-1 text-xs data-[state=active]:bg-emerald-500 data-[state=active]:text-black hover:bg-neutral-800 transition"
-                          value="Weekly"
-                        >
-                          Weekly
-                        </TabsTrigger>
-                        <TabsTrigger
-                          className="px-2 py-1 text-xs data-[state=active]:bg-emerald-500 data-[state=active]:text-black hover:bg-neutral-800 transition"
-                          value="Monthly"
-                        >
-                          Monthly
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
-                  </div>
-                </div>
-
-                <Separator className="bg-neutral-800" />
-
-                {/* Sections */}
-                <div className="space-y-3">
-                  {/* Availability */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25 }}
-                  >
-                    <div className="group flex items-start justify-between rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 hover:bg-neutral-900/70 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.35)] hover:border-emerald-600/40 transition">
-                      <div className="flex items-center gap-2">
-                        <BarChart3 className="h-4 w-4 text-emerald-400 group-hover:scale-110 transition" />
-                        <div>
-                          <div className="font-medium text-neutral-100">
-                            Availability
-                          </div>
-                          <div className="text-xs text-neutral-400">
-                            Regional, {filters.frequency.toLowerCase()} snapshot
-                            as of {fmtDate(filters.asOf)}.
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={goAvailabilityReports}
-                          aria-label="Open Availability reports"
-                          disabled={!canApply}
-                          className="rounded-lg border border-emerald-600/40 bg-neutral-900 text-neutral-100 hover:bg-emerald-500 hover:text-black hover:shadow-lg transition"
-                        >
-                          Open
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-neutral-300 hover:text-emerald-300 hover:bg-neutral-900"
-                        >
-                          View Trend
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
-
-                  {/* Network Traffic */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: 0.03 }}
-                  >
-                    <div className="group flex items-start justify-between rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 hover:bg-neutral-900/70 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.35)] hover:border-emerald-600/40 transition">
-                      <div className="flex items-center gap-2">
-                        <BarChart3 className="h-4 w-4 text-emerald-400 group-hover:scale-110 transition" />
-                        <div>
-                          <div className="font-medium text-neutral-100">
-                            Network Traffic
-                          </div>
-                          <div className="text-xs text-neutral-400">
-                            Throughput / volume by leg as of{" "}
-                            {fmtDate(filters.asOf)}.
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={!canApply}
-                          className="rounded-lg border border-emerald-600/40 bg-neutral-900 text-neutral-100 hover:bg-emerald-500 hover:text-black hover:shadow-lg transition"
-                          onClick={() => {
-                            const qs = new URLSearchParams({
-                              region: filters.region,
-                              freq: filters.frequency,
-                              asOf: toLocalISO(filters.asOf),
-                            });
-                            router.push(`/PSCore?${qs.toString()}`);
-                          }}
-                        >
-                          Open
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-neutral-300 hover:text-emerald-300 hover:bg-neutral-900"
-                        >
-                          View Trend
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
-
-                  {/* Long Persistent Alarms */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: 0.06 }}
-                  >
-                    <div className="group flex items-start justify-between rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 hover:bg-neutral-900/70 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.35)] hover:border-emerald-600/40 transition">
-                      <div className="flex items-center gap-2">
-                        <BellRing className="h-4 w-4 text-emerald-400 group-hover:scale-110 transition" />
-                        <div>
-                          <div className="font-medium text-neutral-100">
-                            Long Persistent Alarms
-                          </div>
-                          <div className="text-xs text-neutral-400">
-                            Aging & severity, {filters.region}.
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={!canApply}
-                          className="rounded-lg border border-emerald-600/40 bg-neutral-900 text-neutral-100 hover:bg-emerald-500 hover:text-black hover:shadow-lg transition"
-                          onClick={() => {
-                            const qs = new URLSearchParams({
-                              region: filters.region,
-                              freq: filters.frequency,
-                              asOf: toLocalISO(filters.asOf),
-                            });
-                            router.push(`/LPA?${qs.toString()}`);
-                          }}
-                        >
-                          Open
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-neutral-300 hover:text-emerald-300 hover:bg-neutral-900"
-                        >
-                          View Trend
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
-
-                  {/* Complaints */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: 0.09 }}
-                  >
-                    <div className="group flex items-start justify-between rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 hover:bg-neutral-900/70 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.35)] hover:border-emerald-600/40 transition">
-                      <div className="flex items-center gap-2">
-                        <MessageSquare className="h-4 w-4 text-emerald-400 group-hover:scale-110 transition" />
-                        <div>
-                          <div className="font-medium text-neutral-100">
-                            Complaints
-                          </div>
-                          <div className="text-xs text-neutral-400">
-                            Hotspots & resolution as of {fmtDate(filters.asOf)}.
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={!canApply}
-                          className="rounded-lg border border-emerald-600/40 bg-neutral-900 text-neutral-100 hover:bg-emerald-500 hover:text-black hover:shadow-lg transition"
-                          onClick={() => {
-                            const qs = new URLSearchParams({
-                              region: filters.region,
-                              freq: filters.frequency,
-                              asOf: toLocalISO(filters.asOf),
-                            });
-                            router.push(`/Complaints?${qs.toString()}`);
-                          }}
-                        >
-                          Open
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-neutral-300 hover:text-emerald-300 hover:bg-neutral-900"
-                        >
-                          View Trend
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
+    <main className="min-h-[100dvh] bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
+      {/* Header */}
+      <section className="relative overflow-hidden">
+        {/* subtle glow */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute -top-24 left-1/2 -translate-x-1/2 h-72 w-[60rem] rounded-full bg-fuchsia-500/20 blur-3xl" />
         </div>
-      </main>
-    </div>
+
+        <div className="mx-auto max-w-7xl px-6 pt-14 pb-10 sm:pt-16 sm:pb-12">
+          <motion.h1
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="text-3xl sm:text-4xl md:text-5xl font-semibold tracking-tight"
+          >
+            Network Analytics Portal
+          </motion.h1>
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.05 }}
+            className="mt-3 max-w-2xl text-slate-300"
+          >
+            Explore Access Network Operations , Cell Utilization, EAS, ISP,
+            Availability, Traffic,RMS and other key performance indicators
+          </motion.p>
+        </div>
+      </section>
+
+      {/* Tiles */}
+      <section className="mx-auto max-w-7xl px-6 pb-16">
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.map((tile, i) => (
+            <motion.div
+              key={tile.key}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: i * 0.05 }}
+            >
+              <Link
+                href={tile.href}
+                className="group block focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-500 rounded-3xl"
+              >
+                <article className="relative h-56 sm:h-64 md:h-72 overflow-hidden rounded-3xl shadow-lg ring-1 ring-white/10 bg-slate-800">
+                  {/* Background image */}
+                  <Image
+                    src={tile.img}
+                    alt={tile.title}
+                    fill
+                    sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                    priority={i < 3}
+                    className="object-cover object-center transition-transform duration-500 group-hover:scale-105"
+                  />
+
+                  {/* Gradient overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/40 to-transparent" />
+
+                  {/* Content */}
+                  <div className="absolute inset-0 p-5 flex flex-col justify-end">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-2.5 w-2.5 rounded-full bg-fuchsia-400/90 shadow-[0_0_24px_theme(colors.fuchsia.400)]" />
+                      <h3 className="text-lg sm:text-xl font-semibold tracking-wide">
+                        {tile.title}
+                      </h3>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-300/90">
+                      {tile.subtitle}
+                    </p>
+                    <div className="mt-4">
+                      <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-200/90">
+                        Open module
+                        <svg
+                          className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M5 12h14" />
+                          <path d="m12 5 7 7-7 7" />
+                        </svg>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Subtle border glow on hover */}
+                  <div className="pointer-events-none absolute inset-0 rounded-3xl ring-1 ring-white/10 group-hover:ring-fuchsia-400/40" />
+                </article>
+              </Link>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-white/10">
+        <div className="mx-auto max-w-7xl px-6 py-8 text-sm text-slate-400">
+          © {new Date().getFullYear()} GeoIntel360 · Built with Next.js +
+          Supabase
+        </div>
+      </footer>
+    </main>
   );
 }
