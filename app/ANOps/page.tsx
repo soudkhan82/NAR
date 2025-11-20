@@ -607,6 +607,38 @@ export default function Page() {
               }
             />
           </div>
+
+          {/* Selected site + report button */}
+          <div className="flex items-center gap-2 mb-2">
+            <input
+              className="border rounded-lg p-2 text-xs flex-1"
+              placeholder="Selected Site"
+              value={filters.site ?? ""}
+              onChange={(e) =>
+                setFilters((f) => ({
+                  ...f,
+                  site: e.target.value || null,
+                }))
+              }
+            />
+            <button
+              type="button"
+              className="px-3 py-2 text-xs rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+              disabled={!filters.site}
+              onClick={() => {
+                if (!filters.site) return;
+                if (typeof window !== "undefined") {
+                  window.open(
+                    `/sitequery/${encodeURIComponent(filters.site)}`,
+                    "_blank"
+                  );
+                }
+              }}
+            >
+              Site Complete Report
+            </button>
+          </div>
+
           <div className="mb-2 text-xs text-slate-600">
             Total: <strong>{rows.length.toLocaleString()}</strong>
           </div>
