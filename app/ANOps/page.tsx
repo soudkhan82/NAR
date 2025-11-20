@@ -164,6 +164,16 @@ const Spinner = () => (
   <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
 );
 
+// CSV escaping helper
+const toCsvValue = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  const str = String(value);
+  if (str.includes('"') || str.includes(",") || str.includes("\n")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
 /* ---------------- Page ---------------- */
 export default function Page() {
   const [loading, setLoading] = useState(false);
@@ -391,6 +401,63 @@ export default function Page() {
   const setSiteClass = (val: SiteClass) =>
     setFilters((f) => ({ ...f, siteClass: val, site: null }));
 
+  // Download CSV for Sites & Projects table
+  // Download CSV for Sites & Projects table
+  const downloadCsv = () => {
+    if (!rows.length) return;
+
+    const headers = [
+      "SiteName",
+      "ProjectName",
+      "Status",
+      "Attempt_date",
+      "v2g",
+      "v3g",
+      "v4g",
+      "Overall", // keep header nice
+    ];
+
+    const lines: string[] = [];
+    lines.push(headers.join(","));
+
+    for (const r of rows) {
+      // Use same logic as table: voverall OR computed overall
+      const overall =
+        typeof r.voverall === "number"
+          ? r.voverall
+          : computeOverall(r.v2g, r.v3g, r.v4g);
+
+      const rowValues = [
+        toCsvValue(r.SiteName),
+        toCsvValue(r.ProjectName ?? ""),
+        toCsvValue(r.Status ?? ""),
+        toCsvValue(r.Attempt_date ?? ""),
+        toCsvValue(r.v2g ?? ""),
+        toCsvValue(r.v3g ?? ""),
+        toCsvValue(r.v4g ?? ""),
+        // export overall as numeric (2 decimals)
+        overall != null ? toCsvValue(overall.toFixed(2)) : "",
+      ];
+
+      lines.push(rowValues.join(","));
+    }
+
+    const csv = lines.join("\r\n");
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    const today = new Date().toISOString().slice(0, 10);
+    link.download = `ANOps_Sites_${today}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   /* ---------------- UI ---------------- */
   return (
     <div className="p-4 space-y-5 bg-gradient-to-b from-white to-slate-50">
@@ -598,14 +665,24 @@ export default function Page() {
         <div className="lg:col-span-1 rounded-2xl border bg-white shadow-sm p-3 relative">
           <div className="flex items-center justify-between mb-2">
             <span className="font-medium">Sites & Projects</span>
-            <input
-              placeholder="Search…"
-              className="border rounded-lg p-2 text-xs"
-              value={filters.search ?? ""}
-              onChange={(e) =>
-                setFilters((f) => ({ ...f, search: e.target.value || null }))
-              }
-            />
+            <div className="flex items-center gap-2">
+              <input
+                placeholder="Search…"
+                className="border rounded-lg p-2 text-xs"
+                value={filters.search ?? ""}
+                onChange={(e) =>
+                  setFilters((f) => ({ ...f, search: e.target.value || null }))
+                }
+              />
+              <button
+                type="button"
+                className="px-3 py-2 text-xs rounded-lg border bg-slate-50 hover:bg-slate-100 text-slate-700 disabled:opacity-50"
+                disabled={!rows.length}
+                onClick={downloadCsv}
+              >
+                Download CSV
+              </button>
+            </div>
           </div>
 
           {/* Selected site + report button */}
