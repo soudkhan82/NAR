@@ -54,6 +54,13 @@ type FilterState = {
   search: string | null;
 };
 
+type SortKey = "v2g" | "v3g" | "v4g" | "voverall";
+type SortDirection = "asc" | "desc";
+type SortConfig = {
+  key: SortKey;
+  direction: SortDirection;
+} | null;
+
 /* --------------- Dynamic RPC loader (client-only) --------------- */
 type RpcModule = {
   fetchProjectNames: () => Promise<string[]>;
@@ -193,6 +200,9 @@ export default function Page() {
   const [ts, setTs] = useState<TimeseriesRow[]>([]);
   const [attempts, setAttempts] = useState<AttemptStatusRow[]>([]);
   const [sitesPool, setSitesPool] = useState<SiteRow[]>([]);
+
+  // sorting only for 2G/3G/4G/Overall
+  const [sortConfig, setSortConfig] = useState<SortConfig>(null);
 
   const rpcRef = useRef<RpcModule | null>(null);
   const getRpc = async () => (rpcRef.current ??= await loadRpc());
@@ -369,6 +379,32 @@ export default function Page() {
     }));
   }, [sitesPool]);
 
+  // Sorted rows for table + CSV (only if sortConfig is set)
+  const sortedRows = useMemo(() => {
+    if (!sortConfig) return rows;
+    const { key, direction } = sortConfig;
+
+    const sorted = [...rows].sort((a, b) => {
+      const aVal = a[key];
+      const bVal = b[key];
+
+      const aNull = aVal === null || aVal === undefined;
+      const bNull = bVal === null || bVal === undefined;
+      if (aNull && bNull) return 0;
+      if (aNull) return 1;
+      if (bNull) return -1;
+
+      const aNum = Number(aVal);
+      const bNum = Number(bVal);
+      if (Number.isNaN(aNum) || Number.isNaN(bNum)) return 0;
+
+      const cmp = aNum === bNum ? 0 : aNum < bNum ? -1 : 1;
+      return direction === "asc" ? cmp : -cmp;
+    });
+
+    return sorted;
+  }, [rows, sortConfig]);
+
   /* ---------------- Handlers ---------------- */
   const onToggleProject = (name: string) => {
     setBusy(true);
@@ -401,10 +437,26 @@ export default function Page() {
   const setSiteClass = (val: SiteClass) =>
     setFilters((f) => ({ ...f, siteClass: val, site: null }));
 
-  // Download CSV for Sites & Projects table
-  // Download CSV for Sites & Projects table
+  const onSort = (key: SortKey) => {
+    setSortConfig((prev) => {
+      if (prev && prev.key === key) {
+        return {
+          key,
+          direction: prev.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return { key, direction: "asc" };
+    });
+  };
+
+  const sortIndicator = (key: SortKey) => {
+    if (!sortConfig || sortConfig.key !== key) return "";
+    return sortConfig.direction === "asc" ? "▲" : "▼";
+  };
+
+  // Download CSV for Sites & Projects table (uses sortedRows)
   const downloadCsv = () => {
-    if (!rows.length) return;
+    if (!sortedRows.length) return;
 
     const headers = [
       "SiteName",
@@ -414,14 +466,13 @@ export default function Page() {
       "v2g",
       "v3g",
       "v4g",
-      "Overall", // keep header nice
+      "Overall",
     ];
 
     const lines: string[] = [];
     lines.push(headers.join(","));
 
-    for (const r of rows) {
-      // Use same logic as table: voverall OR computed overall
+    for (const r of sortedRows) {
       const overall =
         typeof r.voverall === "number"
           ? r.voverall
@@ -435,7 +486,6 @@ export default function Page() {
         toCsvValue(r.v2g ?? ""),
         toCsvValue(r.v3g ?? ""),
         toCsvValue(r.v4g ?? ""),
-        // export overall as numeric (2 decimals)
         overall != null ? toCsvValue(overall.toFixed(2)) : "",
       ];
 
@@ -677,7 +727,7 @@ export default function Page() {
               <button
                 type="button"
                 className="px-3 py-2 text-xs rounded-lg border bg-slate-50 hover:bg-slate-100 text-slate-700 disabled:opacity-50"
-                disabled={!rows.length}
+                disabled={!sortedRows.length}
                 onClick={downloadCsv}
               >
                 Download CSV
@@ -717,7 +767,7 @@ export default function Page() {
           </div>
 
           <div className="mb-2 text-xs text-slate-600">
-            Total: <strong>{rows.length.toLocaleString()}</strong>
+            Total: <strong>{sortedRows.length.toLocaleString()}</strong>
           </div>
 
           <div className="border rounded-lg max-h-[480px] overflow-y-auto overflow-x-auto">
@@ -739,14 +789,58 @@ export default function Page() {
                   <th className="p-2">Project</th>
                   <th className="p-2">Status</th>
                   <th className="p-2">Attempt</th>
-                  <th className="p-2 text-right">2G</th>
-                  <th className="p-2 text-right">3G</th>
-                  <th className="p-2 text-right">4G</th>
-                  <th className="p-2 text-right">Overall</th>
+                  <th className="p-2 text-right">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs font-medium ml-auto"
+                      onClick={() => onSort("v2g")}
+                    >
+                      2G{" "}
+                      <span className="text-[10px]">
+                        {sortIndicator("v2g")}
+                      </span>
+                    </button>
+                  </th>
+                  <th className="p-2 text-right">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs font-medium ml-auto"
+                      onClick={() => onSort("v3g")}
+                    >
+                      3G{" "}
+                      <span className="text-[10px]">
+                        {sortIndicator("v3g")}
+                      </span>
+                    </button>
+                  </th>
+                  <th className="p-2 text-right">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs font-medium ml-auto"
+                      onClick={() => onSort("v4g")}
+                    >
+                      4G{" "}
+                      <span className="text-[10px]">
+                        {sortIndicator("v4g")}
+                      </span>
+                    </button>
+                  </th>
+                  <th className="p-2 text-right">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs font-medium ml-auto"
+                      onClick={() => onSort("voverall")}
+                    >
+                      Overall{" "}
+                      <span className="text-[10px]">
+                        {sortIndicator("voverall")}
+                      </span>
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
+                {sortedRows.map((r, i) => (
                   <tr
                     key={`${r.SiteName ?? ""}-${r.ProjectName ?? ""}-${i}`}
                     className={`${
@@ -806,7 +900,7 @@ export default function Page() {
                     </td>
                   </tr>
                 ))}
-                {rows.length === 0 && (
+                {sortedRows.length === 0 && (
                   <tr>
                     <td className="p-4" colSpan={8}>
                       {loading ? "Loading…" : "No rows found"}
