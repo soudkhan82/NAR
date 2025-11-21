@@ -1,7 +1,7 @@
 // app/traffic/TrafficClient.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -13,148 +13,85 @@ import {
   CartesianGrid,
 } from "recharts";
 
-/* ----------------------------- Types ----------------------------- */
+import {
+  fetchTrafficDaily,
+  fetchSubregions,
+  type TrafficDailyRow,
+  fetchLatestByGrid,
+  fetchLatestByDistrict,
+  type LatestAggRow,
+  sortLatest,
+  type SortKey,
+  type SortDir,
+  // point-change RPCs (return rows with number|null + dates)
+  fetchGridPointChange,
+  fetchSitesPointChange,
+} from "@/app/lib/rpc/traffic";
 
-type TrafficDailyRow = {
-  date: string; // "YYYY-MM-DD"
-  voice_erl: number | null;
-  total_gb: number | null;
-  voice_2g?: number | null;
-  voice_3g?: number | null;
-  volte_voice?: number | null;
-  data_2g_gb?: number | null;
-  data_3g_gb?: number | null;
-  data_4g_gb?: number | null;
+/* ------------------------ Link to SiteQuery ----------------------- */
+const openSite = (siteName: string) => {
+  const id = encodeURIComponent(siteName || "UNKNOWN");
+  window.open(`/sitequery/${id}`, "_blank", "noopener,noreferrer");
 };
 
-type LatestGridRow = {
-  grid: string | null;
-  latest_date: string | null;
-  total_gb: number | null;
-  voice_erl: number | null;
-};
-
-type LatestDistrictRow = {
-  district: string | null;
-  latest_date: string | null;
-  total_gb: number | null;
-  voice_erl: number | null;
-};
-
-type LatestAggRow = {
-  key: string; // grid or district
-  latest_date: string;
-  total_gb: number;
-  voice_erl: number;
-};
-
-type SortKey = "total_gb" | "voice_erl";
-type SortDir = "asc" | "desc";
-
-/* ------------------------ Number formatters ----------------------- */
+/* ------------------------ Number formatting ----------------------- */
 const nf2 = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
-
-/* Recharts helpers */
 const yTickFmt = (v: number) => nf2.format(Number(v));
 const tipFmt = (v: unknown) => nf2.format(Number(v));
 const tipLabelFmt = (label: string) => label;
 
-/* ---------------------- Dynamic Supabase loader ------------------- */
-type RpcResult<T> = { data: T | null; error: { message?: string } | null };
-type SupabaseLike = {
-  rpc: (
-    fn: string,
-    args?: Record<string, unknown>
-  ) => Promise<RpcResult<unknown[]>>;
-};
-
-async function loadSupabase(): Promise<SupabaseLike> {
-  // Import at runtime only (client) to avoid build-time env access.
-  const mod = await import("@/app/config/supabase-config");
-  return mod.default as unknown as SupabaseLike;
-}
-
-/* ------------------------- Helper mappers ------------------------- */
-function toDailySeries(arr: unknown[]): TrafficDailyRow[] {
-  const out: TrafficDailyRow[] = [];
-  for (const x of arr) {
-    const r = x as Partial<TrafficDailyRow>;
-    out.push({
-      date: String(r.date ?? "").slice(0, 10),
-      voice_erl: r.voice_erl ?? 0,
-      total_gb: r.total_gb ?? 0,
-      voice_2g: r.voice_2g ?? 0,
-      voice_3g: r.voice_3g ?? 0,
-      volte_voice: r.volte_voice ?? 0,
-      data_2g_gb: r.data_2g_gb ?? 0,
-      data_3g_gb: r.data_3g_gb ?? 0,
-      data_4g_gb: r.data_4g_gb ?? 0,
-    });
-  }
-  return out;
-}
-
-function mapLatestGrid(arr: unknown[]): LatestAggRow[] {
-  const out: LatestAggRow[] = [];
-  for (const x of arr) {
-    const r = x as Partial<LatestGridRow>;
-    out.push({
-      key: String(r.grid ?? "UNKNOWN"),
-      latest_date: String(r.latest_date ?? "").slice(0, 10),
-      total_gb: Number(r.total_gb ?? 0),
-      voice_erl: Number(r.voice_erl ?? 0),
-    });
-  }
-  return out;
-}
-
-function mapLatestDistrict(arr: unknown[]): LatestAggRow[] {
-  const out: LatestAggRow[] = [];
-  for (const x of arr) {
-    const r = x as Partial<LatestDistrictRow>;
-    out.push({
-      key: String(r.district ?? "UNKNOWN"),
-      latest_date: String(r.latest_date ?? "").slice(0, 10),
-      total_gb: Number(r.total_gb ?? 0),
-      voice_erl: Number(r.voice_erl ?? 0),
-    });
-  }
-  return out;
-}
-
-function sortLatest(
-  rows: LatestAggRow[],
-  key: SortKey,
-  dir: SortDir
-): LatestAggRow[] {
-  const s = [...rows].sort((a, b) => {
-    const av = a[key];
-    const bv = b[key];
-    if (av === bv) return a.key.localeCompare(b.key);
-    return av < bv ? -1 : 1;
-  });
-  return dir === "desc" ? s.reverse() : s;
-}
-
 /* ------------------- Gradient cell background -------------------- */
 function cellGradientStyle(
-  value: number,
-  max: number,
+  valueAbs: number,
+  maxAbs: number,
   color: "data" | "voice"
 ): React.CSSProperties {
-  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+  const pct =
+    maxAbs > 0 ? Math.max(0, Math.min(100, (valueAbs / maxAbs) * 100)) : 0;
   const col =
     color === "data" ? "rgba(37, 99, 235, 0.18)" : "rgba(22, 163, 74, 0.18)";
   return {
     background: `linear-gradient(90deg, ${col} ${pct}%, transparent ${pct}%)`,
   };
 }
+const deltaIcon = (v: number) =>
+  v > 0 ? (
+    <span className="text-green-600">▲</span>
+  ) : v < 0 ? (
+    <span className="text-red-600">▼</span>
+  ) : (
+    <span className="text-gray-400">•</span>
+  );
 
-/* ============================== Component ============================== */
+/* -------- Local display types (non-null numbers to avoid TS errors) ------- */
+type GridChangeRow = {
+  grid: string;
+  data_old: number;
+  data_new: number;
+  data_delta: number;
+  data_delta_pct: number | null;
+  voice_old: number;
+  voice_new: number;
+  voice_delta: number;
+  voice_delta_pct: number | null;
+};
+type SiteChangeRow = {
+  site_name: string;
+  site_class: string;
+  data_old: number;
+  data_new: number;
+  data_delta: number;
+  data_delta_pct: number | null;
+  voice_old: number;
+  voice_new: number;
+  voice_delta: number;
+  voice_delta_pct: number | null;
+};
 
+/* ------------------------------- UI ------------------------------- */
 export default function TrafficClient() {
   const [subs, setSubs] = useState<string[]>([]);
   const [selectedSub, setSelectedSub] = useState<string>("__ALL__");
@@ -162,6 +99,21 @@ export default function TrafficClient() {
   const [daily, setDaily] = useState<TrafficDailyRow[]>([]);
   const [gridLatest, setGridLatest] = useState<LatestAggRow[]>([]);
   const [districtLatest, setDistrictLatest] = useState<LatestAggRow[]>([]);
+
+  // point-change state (normalized to non-nullable numbers)
+  const [gridChange, setGridChange] = useState<GridChangeRow[]>([]);
+  const [siteChange, setSiteChange] = useState<SiteChangeRow[]>([]);
+  const [selectedGrid, setSelectedGrid] = useState<string | null>(null);
+
+  //Sorting
+  const [siteSortKey, setSiteSortKey] = useState<
+    "data_delta_pct" | "voice_delta_pct"
+  >("data_delta_pct");
+  const [siteSortDir, setSiteSortDir] = useState<"asc" | "desc">("desc");
+
+  // dates (single header above Grid table)
+  const [latestDate, setLatestDate] = useState<string | null>(null);
+  const [oldDate, setOldDate] = useState<string | null>(null);
 
   const [gridSortKey, setGridSortKey] = useState<SortKey>("total_gb");
   const [gridSortDir, setGridSortDir] = useState<SortDir>("desc");
@@ -171,80 +123,135 @@ export default function TrafficClient() {
   const [loading, setLoading] = useState<boolean>(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const sbRef = useRef<SupabaseLike | null>(null);
-  const getSB = async () => {
-    if (!sbRef.current) sbRef.current = await loadSupabase();
-    return sbRef.current;
-  };
-
   // Load SubRegion options
   useEffect(() => {
     (async () => {
       try {
-        const sb = await getSB();
-        const { data, error } = await sb.rpc("fetch_ssl_subregions");
-        if (error) throw error;
-        const arr: unknown[] = Array.isArray(data) ? data : [];
-        const seen = new Map<string, string>();
-        for (const x of arr) {
-          const v = String(
-            (x as { subregion?: string | null }).subregion ?? ""
-          ).trim();
-          if (!v) continue;
-          const k = v.toLowerCase();
-          if (!seen.has(k)) seen.set(k, v);
-        }
-        setSubs(Array.from(seen.values()));
-      } catch (e: unknown) {
-        setErr(
-          (e as { message?: string })?.message ?? "Failed to load subregions"
-        );
+        const list = await fetchSubregions();
+        setSubs(list);
+      } catch (e) {
+        setErr((e as Error)?.message ?? "Failed to load subregions");
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fetch series + latest aggregates when SubRegion changes
+  // Fetch on SubRegion change
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
         setErr(null);
         const sub = selectedSub === "__ALL__" ? null : selectedSub;
-        const sb = await getSB();
 
-        const [dRes, gRes, diRes] = await Promise.all([
-          sb.rpc("rpc_traffic_daily", {
-            in_date_from: null,
-            in_date_to: null,
-            in_subregion: sub,
-          }),
-          sb.rpc("rpc_traffic_latest_by_grid", { in_subregion: sub }),
-          sb.rpc("rpc_traffic_latest_by_district", { in_subregion: sub }),
+        const [dArr, gArr, diArr, gChangeRaw] = await Promise.all([
+          fetchTrafficDaily({ date_from: null, date_to: null, subregion: sub }),
+          fetchLatestByGrid(sub),
+          fetchLatestByDistrict(sub),
+          fetchGridPointChange(sub), // returns nullable numbers + dates
         ]);
 
-        if (dRes.error) throw dRes.error;
-        if (gRes.error) throw gRes.error;
-        if (diRes.error) throw diRes.error;
+        setDaily(dArr);
+        setGridLatest(gArr);
+        setDistrictLatest(diArr);
 
-        const dArr: unknown[] = Array.isArray(dRes.data) ? dRes.data : [];
-        const gArr: unknown[] = Array.isArray(gRes.data) ? gRes.data : [];
-        const diArr: unknown[] = Array.isArray(diRes.data) ? diRes.data : [];
+        // Capture dates for header (from the first row)
+        setLatestDate(gChangeRaw[0]?.latest_date ?? null);
+        setOldDate(gChangeRaw[0]?.prior_date ?? null);
 
-        setDaily(toDailySeries(dArr));
-        setGridLatest(mapLatestGrid(gArr));
-        setDistrictLatest(mapLatestDistrict(diArr));
-      } catch (e: unknown) {
-        setErr((e as { message?: string })?.message ?? "Failed to load data");
+        // Normalize to non-null numbers
+        const gNorm: GridChangeRow[] = gChangeRaw.map((r) => ({
+          grid: r.grid,
+          data_old: Number(r.data_old ?? 0),
+          data_new: Number(r.data_new ?? 0),
+          data_delta: Number(
+            r.data_delta ?? (r.data_new ?? 0) - (r.data_old ?? 0)
+          ),
+          data_delta_pct:
+            r.data_delta_pct ??
+            (r.data_old
+              ? ((Number(r.data_new ?? 0) - Number(r.data_old ?? 0)) /
+                  Number(r.data_old)) *
+                100
+              : null),
+          voice_old: Number(r.voice_old ?? 0),
+          voice_new: Number(r.voice_new ?? 0),
+          voice_delta: Number(
+            r.voice_delta ?? (r.voice_new ?? 0) - (r.voice_old ?? 0)
+          ),
+          voice_delta_pct:
+            r.voice_delta_pct ??
+            (r.voice_old
+              ? ((Number(r.voice_new ?? 0) - Number(r.voice_old ?? 0)) /
+                  Number(r.voice_old)) *
+                100
+              : null),
+        }));
+        setGridChange(gNorm);
+
+        // reset site state
+        setSelectedGrid(null);
+        setSiteChange([]);
+      } catch (e) {
+        setErr((e as Error)?.message ?? "Failed to load data");
         setDaily([]);
         setGridLatest([]);
         setDistrictLatest([]);
+        setGridChange([]);
+        setSelectedGrid(null);
+        setSiteChange([]);
+        setLatestDate(null);
+        setOldDate(null);
       } finally {
         setLoading(false);
       }
     })();
   }, [selectedSub]);
 
+  // When a grid is selected, fetch site point-change and normalize
+  useEffect(() => {
+    (async () => {
+      if (!selectedGrid) return;
+      try {
+        const sub = selectedSub === "__ALL__" ? null : selectedSub;
+        const rows = await fetchSitesPointChange(selectedGrid, sub); // nullable numbers + dates
+
+        const sNorm: SiteChangeRow[] = rows.map((r) => ({
+          site_name: r.site_name,
+          site_class: r.site_class,
+          data_old: Number(r.data_old ?? 0),
+          data_new: Number(r.data_new ?? 0),
+          data_delta: Number(
+            r.data_delta ?? (r.data_new ?? 0) - (r.data_old ?? 0)
+          ),
+          data_delta_pct:
+            r.data_delta_pct ??
+            (r.data_old
+              ? ((Number(r.data_new ?? 0) - Number(r.data_old ?? 0)) /
+                  Number(r.data_old)) *
+                100
+              : null),
+          voice_old: Number(r.voice_old ?? 0),
+          voice_new: Number(r.voice_new ?? 0),
+          voice_delta: Number(
+            r.voice_delta ?? (r.voice_new ?? 0) - (r.voice_old ?? 0)
+          ),
+          voice_delta_pct:
+            r.voice_delta_pct ??
+            (r.voice_old
+              ? ((Number(r.voice_new ?? 0) - Number(r.voice_old ?? 0)) /
+                  Number(r.voice_old)) *
+                100
+              : null),
+        }));
+        setSiteChange(sNorm);
+      } catch (e) {
+        setErr((e as Error)?.message ?? "Failed to load sites");
+        setSiteChange([]);
+      }
+    })();
+  }, [selectedGrid, selectedSub]);
+
+  /* ------------------------- Derived state ------------------------- */
   const avgDataGB = useMemo(() => {
     const n = daily.length || 1;
     const sum = daily.reduce((s, r) => s + Number(r.total_gb ?? 0), 0);
@@ -276,6 +283,17 @@ export default function TrafficClient() {
     [daily]
   );
 
+  const sortedSiteChange = useMemo(() => {
+    const rows = [...siteChange];
+    const val = (x: number | null) => (x == null ? -Infinity : x);
+    rows.sort((a, b) => {
+      const av = val(a[siteSortKey]);
+      const bv = val(b[siteSortKey]);
+      return siteSortDir === "asc" ? av - bv : bv - av;
+    });
+    return rows;
+  }, [siteChange, siteSortKey, siteSortDir]);
+  // maxima for heatbar backgrounds
   const gridMax = useMemo(
     () => ({
       total_gb: Math.max(0, ...gridRows.map((r) => r.total_gb)),
@@ -290,13 +308,21 @@ export default function TrafficClient() {
     }),
     [districtRows]
   );
+  const varMax = useMemo(
+    () => ({
+      data: Math.max(0, ...gridChange.map((r) => Math.abs(r.data_delta))),
+      voice: Math.max(0, ...gridChange.map((r) => Math.abs(r.voice_delta))),
+    }),
+    [gridChange]
+  );
 
+  /* ------------------------------- Render ------------------------------- */
   return (
     <div className="p-4 space-y-4">
       {/* Header + SubRegion select */}
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold">
-          Network Traffic — Latest Totals & Daily Series
+          Network Traffic — Latest Totals, Point Change (30d) & Daily Series
         </h1>
         <div className="ml-auto flex items-center gap-2">
           <label className="text-sm text-gray-600">SubRegion</label>
@@ -340,7 +366,280 @@ export default function TrafficClient() {
         </div>
       )}
 
-      {/* Tables */}
+      {/* Point-change by Grid + Sites in selected Grid */}
+      {/* Point-change by Grid + Sites in selected Grid */}
+      {!loading && !err && (
+        <div className="grid grid-cols-1 gap-4">
+          {/* Grid Point-Change */}
+          <div className="rounded-2xl border bg-white/60">
+            <div className="px-4 py-3 border-b">
+              <div className="font-medium">
+                Latest vs 30 Days Earlier — by Grid
+              </div>
+              <div className="text-xs text-gray-600 mt-1">
+                Latest: <span className="font-medium">{latestDate ?? "-"}</span>
+                <span className="mx-2">•</span>
+                Old: <span className="font-medium">{oldDate ?? "-"}</span>
+              </div>
+            </div>
+
+            {/* ~12 rows viewport */}
+            <div className="max-h-[580px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white/90 backdrop-blur z-10">
+                  <tr className="[&>th]:px-3 [&>th]:py-2 text-left text-gray-600">
+                    <th style={{ width: 36 }}>#</th>
+                    <th>Grid</th>
+                    <th className="text-right">Data Old</th>
+                    <th className="text-right">Data New</th>
+                    <th className="text-right">Δ Data</th>
+                    <th className="text-right">% Data</th>
+                    <th className="text-right">Voice Old</th>
+                    <th className="text-right">Voice New</th>
+                    <th className="text-right">Δ Voice</th>
+                    <th className="text-right">% Voice</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gridChange.map((r, idx) => (
+                    <tr
+                      key={`${r.grid || "UNKNOWN"}-${idx}`}
+                      className={`border-t cursor-pointer ${
+                        selectedGrid === r.grid ? "bg-blue-50" : ""
+                      }`}
+                      onClick={() => setSelectedGrid(r.grid)}
+                      title="Click to see sites"
+                    >
+                      <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
+                      <td className="px-3 py-2">{r.grid}</td>
+
+                      <td className="px-3 py-2 text-right">
+                        {nf2.format(r.data_old)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {nf2.format(r.data_new)}
+                      </td>
+                      <td
+                        className="px-3 py-2 text-right rounded-sm"
+                        style={cellGradientStyle(
+                          Math.abs(r.data_delta),
+                          Math.max(1, varMax.data),
+                          "data"
+                        )}
+                      >
+                        {r.data_delta > 0 ? (
+                          <span className="text-green-600">▲</span>
+                        ) : r.data_delta < 0 ? (
+                          <span className="text-red-600">▼</span>
+                        ) : (
+                          <span className="text-gray-400">•</span>
+                        )}
+                        &nbsp;{nf2.format(r.data_delta)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {r.data_delta_pct == null
+                          ? "-"
+                          : `${nf2.format(r.data_delta_pct)}%`}
+                      </td>
+
+                      <td className="px-3 py-2 text-right">
+                        {nf2.format(r.voice_old)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {nf2.format(r.voice_new)}
+                      </td>
+                      <td
+                        className="px-3 py-2 text-right rounded-sm"
+                        style={cellGradientStyle(
+                          Math.abs(r.voice_delta),
+                          Math.max(1, varMax.voice),
+                          "voice"
+                        )}
+                      >
+                        {r.voice_delta > 0 ? (
+                          <span className="text-green-600">▲</span>
+                        ) : r.voice_delta < 0 ? (
+                          <span className="text-red-600">▼</span>
+                        ) : (
+                          <span className="text-gray-400">•</span>
+                        )}
+                        &nbsp;{nf2.format(r.voice_delta)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {r.voice_delta_pct == null
+                          ? "-"
+                          : `${nf2.format(r.voice_delta_pct)}%`}
+                      </td>
+                    </tr>
+                  ))}
+                  {gridChange.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={10}
+                        className="px-4 py-6 text-center text-gray-500"
+                      >
+                        No data
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Sites for selected Grid (Point-Change) */}
+          <div className="rounded-2xl border bg-white/60">
+            <div className="px-4 py-3 border-b flex items-center gap-3">
+              <span className="font-medium">
+                Sites — {selectedGrid ? selectedGrid : "Select a Grid"}
+              </span>
+              <div className="ml-auto flex items-center gap-2 text-sm">
+                <label>Sort:</label>
+                <select
+                  className="border rounded p-1 bg-white"
+                  value={siteSortKey}
+                  onChange={(e) =>
+                    setSiteSortKey(
+                      e.target.value as "data_delta_pct" | "voice_delta_pct"
+                    )
+                  }
+                  title="Sort sites by percentage change"
+                >
+                  <option value="data_delta_pct">% Data</option>
+                  <option value="voice_delta_pct">% Voice</option>
+                </select>
+                <button
+                  className="border rounded px-2 py-1"
+                  onClick={() =>
+                    setSiteSortDir((d) => (d === "desc" ? "asc" : "desc"))
+                  }
+                  title="Toggle ASC/DESC"
+                >
+                  {siteSortDir.toUpperCase()}
+                </button>
+              </div>
+            </div>
+
+            {/* ~12 rows viewport */}
+            <div className="max-h-[580px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white/90 backdrop-blur z-10">
+                  <tr className="[&>th]:px-3 [&>th]:py-2 text-left text-gray-600">
+                    <th style={{ width: 36 }}>#</th>
+                    <th>Site</th>
+                    <th>Class</th>
+                    <th className="text-right">Data Old</th>
+                    <th className="text-right">Data New</th>
+                    <th className="text-right">Δ Data</th>
+                    <th className="text-right">% Data</th>
+                    <th className="text-right">Voice Old</th>
+                    <th className="text-right">Voice New</th>
+                    <th className="text-right">Δ Voice</th>
+                    <th className="text-right">% Voice</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedGrid &&
+                    sortedSiteChange.map((r, idx) => (
+                      <tr
+                        key={`${r.site_name || "UNKNOWN"}-${idx}`}
+                        className="border-t cursor-pointer hover:bg-blue-50"
+                        onClick={() => openSite(r.site_name)}
+                        title="Open Site Analytics in a new tab"
+                      >
+                        <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
+
+                        {/* Make the Site column an explicit link too (accessibility + affordance) */}
+                        <td className="px-3 py-2">
+                          <a
+                            href={`/sitequery/${encodeURIComponent(
+                              r.site_name || "UNKNOWN"
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()} // prevent double open
+                            className="text-blue-600 hover:underline"
+                            title="Open Site Analytics in a new tab"
+                          >
+                            {r.site_name}
+                          </a>
+                        </td>
+
+                        <td className="px-3 py-2">{r.site_class}</td>
+
+                        <td className="px-3 py-2 text-right">
+                          {nf2.format(r.data_old)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {nf2.format(r.data_new)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {r.data_delta > 0 ? (
+                            <span className="text-green-600">▲</span>
+                          ) : r.data_delta < 0 ? (
+                            <span className="text-red-600">▼</span>
+                          ) : (
+                            <span className="text-gray-400">•</span>
+                          )}
+                          &nbsp;{nf2.format(r.data_delta)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {r.data_delta_pct == null
+                            ? "-"
+                            : `${nf2.format(r.data_delta_pct)}%`}
+                        </td>
+
+                        <td className="px-3 py-2 text-right">
+                          {nf2.format(r.voice_old)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {nf2.format(r.voice_new)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {r.voice_delta > 0 ? (
+                            <span className="text-green-600">▲</span>
+                          ) : r.voice_delta < 0 ? (
+                            <span className="text-red-600">▼</span>
+                          ) : (
+                            <span className="text-gray-400">•</span>
+                          )}
+                          &nbsp;{nf2.format(r.voice_delta)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {r.voice_delta_pct == null
+                            ? "-"
+                            : `${nf2.format(r.voice_delta_pct)}%`}
+                        </td>
+                      </tr>
+                    ))}
+                  {!selectedGrid && (
+                    <tr>
+                      <td
+                        colSpan={11}
+                        className="px-4 py-6 text-center text-gray-500"
+                      >
+                        Click a grid on the left to load sites
+                      </td>
+                    </tr>
+                  )}
+                  {selectedGrid && siteChange.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={11}
+                        className="px-4 py-6 text-center text-gray-500"
+                      >
+                        No sites found for this grid
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Latest by District / Grid (unchanged core) */}
       {!loading && !err && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* District table */}
@@ -368,8 +667,8 @@ export default function TrafficClient() {
                 </button>
               </div>
             </div>
-            <div className="max-h-[420px] overflow-y-auto">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm">
                 <thead className="sticky top-0 bg-white/90 backdrop-blur z-10">
                   <tr className="[&>th]:px-4 [&>th]:py-2 text-left text-gray-600">
                     <th style={{ width: 48 }}>#</th>
@@ -386,24 +685,28 @@ export default function TrafficClient() {
                       <td className="px-4 py-2">{r.key}</td>
                       <td className="px-4 py-2">{r.latest_date}</td>
                       <td
-                        className="px-4 py-2 text-right rounded-sm"
+                        className="px-4 py-2 text-right"
                         style={cellGradientStyle(
-                          r.total_gb,
-                          distMax.total_gb,
+                          Math.abs(r.total_gb),
+                          Math.max(
+                            1,
+                            ...districtRows.map((x) => Math.abs(x.total_gb))
+                          ),
                           "data"
                         )}
-                        title={nf2.format(r.total_gb)}
                       >
                         {nf2.format(r.total_gb)}
                       </td>
                       <td
-                        className="px-4 py-2 text-right rounded-sm"
+                        className="px-4 py-2 text-right"
                         style={cellGradientStyle(
-                          r.voice_erl,
-                          distMax.voice_erl,
+                          Math.abs(r.voice_erl),
+                          Math.max(
+                            1,
+                            ...districtRows.map((x) => Math.abs(x.voice_erl))
+                          ),
                           "voice"
                         )}
-                        title={nf2.format(r.voice_erl)}
                       >
                         {nf2.format(r.voice_erl)}
                       </td>
@@ -424,7 +727,7 @@ export default function TrafficClient() {
             </div>
           </div>
 
-          {/* Grid table */}
+          {/* Grid totals table */}
           <div className="rounded-2xl border bg-white/60">
             <div className="px-4 py-3 border-b flex items-center gap-3">
               <span className="font-medium">Latest Totals — by Grid</span>
@@ -449,8 +752,8 @@ export default function TrafficClient() {
                 </button>
               </div>
             </div>
-            <div className="max-h-[420px] overflow-y-auto">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm">
                 <thead className="sticky top-0 bg-white/90 backdrop-blur z-10">
                   <tr className="[&>th]:px-4 [&>th]:py-2 text-left text-gray-600">
                     <th style={{ width: 48 }}>#</th>
@@ -467,24 +770,28 @@ export default function TrafficClient() {
                       <td className="px-4 py-2">{r.key}</td>
                       <td className="px-4 py-2">{r.latest_date}</td>
                       <td
-                        className="px-4 py-2 text-right rounded-sm"
+                        className="px-4 py-2 text-right"
                         style={cellGradientStyle(
-                          r.total_gb,
-                          gridMax.total_gb,
+                          Math.abs(r.total_gb),
+                          Math.max(
+                            1,
+                            ...gridRows.map((x) => Math.abs(x.total_gb))
+                          ),
                           "data"
                         )}
-                        title={nf2.format(r.total_gb)}
                       >
                         {nf2.format(r.total_gb)}
                       </td>
                       <td
-                        className="px-4 py-2 text-right rounded-sm"
+                        className="px-4 py-2 text-right"
                         style={cellGradientStyle(
-                          r.voice_erl,
-                          gridMax.voice_erl,
+                          Math.abs(r.voice_erl),
+                          Math.max(
+                            1,
+                            ...gridRows.map((x) => Math.abs(x.voice_erl))
+                          ),
                           "voice"
                         )}
-                        title={nf2.format(r.voice_erl)}
                       >
                         {nf2.format(r.voice_erl)}
                       </td>
