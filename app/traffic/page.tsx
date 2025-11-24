@@ -1,886 +1,1058 @@
-// app/traffic/TrafficClient.tsx
+// app/Traffic/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+
 import {
   ResponsiveContainer,
-  AreaChart,
-  Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
+  CartesianGrid,
   Tooltip,
   Legend,
-  CartesianGrid,
 } from "recharts";
 
+import { ArrowUpRight, ArrowDownRight, ArrowUpDown } from "lucide-react";
+
 import {
-  fetchTrafficDaily,
-  fetchSubregions,
-  type TrafficDailyRow,
-  fetchLatestByGrid,
-  fetchLatestByDistrict,
-  type LatestAggRow,
-  sortLatest,
-  type SortKey,
-  type SortDir,
-  // point-change RPCs (return rows with number|null + dates)
-  fetchGridPointChange,
-  fetchSitesPointChange,
+  fetchRegions,
+  fetchSubregionsByRegion,
+  fetchTrafficDateBounds,
+  fetchTrafficTimeseries,
+  fetchTrafficComparison,
+  fetchTrafficGridChange,
+  fetchTrafficDistrictChange,
+  type TrafficTimeseriesRow,
+  type TrafficComparisonRow,
+  type TrafficGridChangeRow,
+  type TrafficDistrictChangeRow,
 } from "@/app/lib/rpc/traffic";
 
-/* ------------------------ Link to SiteQuery ----------------------- */
-const openSite = (siteName: string) => {
-  const id = encodeURIComponent(siteName || "UNKNOWN");
-  window.open(`/sitequery/${id}`, "_blank", "noopener,noreferrer");
-};
+type RegionFilter = "ALL" | string;
 
-/* ------------------------ Number formatting ----------------------- */
-const nf2 = new Intl.NumberFormat(undefined, {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-const yTickFmt = (v: number) => nf2.format(Number(v));
-const tipFmt = (v: unknown) => nf2.format(Number(v));
-const tipLabelFmt = (label: string) => label;
-
-/* ------------------- Gradient cell background -------------------- */
-function cellGradientStyle(
-  valueAbs: number,
-  maxAbs: number,
-  color: "data" | "voice"
-): React.CSSProperties {
-  const pct =
-    maxAbs > 0 ? Math.max(0, Math.min(100, (valueAbs / maxAbs) * 100)) : 0;
-  const col =
-    color === "data" ? "rgba(37, 99, 235, 0.18)" : "rgba(22, 163, 74, 0.18)";
-  return {
-    background: `linear-gradient(90deg, ${col} ${pct}%, transparent ${pct}%)`,
-  };
+interface FiltersState {
+  region: RegionFilter;
+  subregion: string; // "ALL" = all
+  oldDate: string;
+  newDate: string;
 }
-const deltaIcon = (v: number) =>
-  v > 0 ? (
-    <span className="text-green-600">▲</span>
-  ) : v < 0 ? (
-    <span className="text-red-600">▼</span>
-  ) : (
-    <span className="text-gray-400">•</span>
+
+/* ------ helper: number formatting ------ */
+
+const formatNumberCompact = (value: number): string => {
+  if (!Number.isFinite(value)) return "0";
+  return new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+};
+
+const formatNumberStd = (value: number): string => {
+  if (!Number.isFinite(value)) return "0";
+  return value.toLocaleString("en", {
+    maximumFractionDigits: 2,
+  });
+};
+
+/* ------ CSV helper ------ */
+
+const downloadCsv = (
+  filename: string,
+  headers: string[],
+  rows: (string | number | null | undefined)[][]
+) => {
+  const escape = (val: string | number | null | undefined): string => {
+    if (val === null || val === undefined) return "";
+    const s = String(val);
+    if (s.includes('"') || s.includes(",") || s.includes("\n")) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const csvLines = [
+    headers.map(escape).join(","),
+    ...rows.map((row) => row.map(escape).join(",")),
+  ];
+  const csv = csvLines.join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+/* ------ indicator meta for charts + cards + table ------ */
+
+const INDICATORS: {
+  key: keyof TrafficTimeseriesRow;
+  metricCode: string;
+  label: string;
+  group: "Voice" | "Data";
+}[] = [
+  {
+    key: "voice_2g",
+    metricCode: "RadioVoice_2G_Traffic",
+    label: "2G Voice (erl)",
+    group: "Voice",
+  },
+  {
+    key: "voice_3g",
+    metricCode: "RadioVoice_3G_Traffic",
+    label: "3G Voice (erl)",
+    group: "Voice",
+  },
+  {
+    key: "volte_voice",
+    metricCode: "VoLTE_Voice_Traffic",
+    label: "VoLTE Voice (erl)",
+    group: "Voice",
+  },
+  {
+    key: "total_voice_erl",
+    metricCode: "TotalVoiceTraffic_Erl",
+    label: "Total Voice (erl)",
+    group: "Voice",
+  },
+  {
+    key: "data_2g_gb",
+    metricCode: "RadioData_2G_Traffic_GB",
+    label: "2G Data (GB)",
+    group: "Data",
+  },
+  {
+    key: "data_3g_gb",
+    metricCode: "RadioData_3G_Traffic_GB",
+    label: "3G Data (GB)",
+    group: "Data",
+  },
+  {
+    key: "data_4g_gb",
+    metricCode: "RadioData_4G_Traffic_GB",
+    label: "4G Data (GB)",
+    group: "Data",
+  },
+  {
+    key: "total_data_gb",
+    metricCode: "Total_Traffic_GB",
+    label: "Total Data (GB)",
+    group: "Data",
+  },
+];
+
+type SortField = "voice" | "data" | "none";
+type SortDir = "asc" | "desc";
+
+export default function TrafficPage() {
+  const today = new Date();
+  const isoToday = today.toISOString().slice(0, 10);
+  const sevenDaysAgo = new Date(today);
+  sevenDaysAgo.setDate(today.getDate() - 7);
+  const isoSevenDaysAgo = sevenDaysAgo.toISOString().slice(0, 10);
+
+  const [filters, setFilters] = useState<FiltersState>({
+    region: "ALL",
+    subregion: "ALL",
+    oldDate: isoSevenDaysAgo,
+    newDate: isoToday,
+  });
+
+  const [regionOptions, setRegionOptions] = useState<string[]>([]);
+  const [subregionOptions, setSubregionOptions] = useState<string[]>([]);
+
+  const [tsData, setTsData] = useState<TrafficTimeseriesRow[]>([]);
+  const [compareRows, setCompareRows] = useState<TrafficComparisonRow[]>([]);
+  const [gridChangeRows, setGridChangeRows] = useState<TrafficGridChangeRow[]>(
+    []
   );
+  const [districtChangeRows, setDistrictChangeRows] = useState<
+    TrafficDistrictChangeRow[]
+  >([]);
 
-/* -------- Local display types (non-null numbers to avoid TS errors) ------- */
-type GridChangeRow = {
-  grid: string;
-  data_old: number;
-  data_new: number;
-  data_delta: number;
-  data_delta_pct: number | null;
-  voice_old: number;
-  voice_new: number;
-  voice_delta: number;
-  voice_delta_pct: number | null;
-};
-type SiteChangeRow = {
-  site_name: string;
-  site_class: string;
-  data_old: number;
-  data_new: number;
-  data_delta: number;
-  data_delta_pct: number | null;
-  voice_old: number;
-  voice_new: number;
-  voice_delta: number;
-  voice_delta_pct: number | null;
-};
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-/* ------------------------------- UI ------------------------------- */
-export default function TrafficClient() {
-  const [subs, setSubs] = useState<string[]>([]);
-  const [selectedSub, setSelectedSub] = useState<string>("__ALL__");
+  // sort state for grid & district tables
+  const [gridSort, setGridSort] = useState<{ field: SortField; dir: SortDir }>({
+    field: "none",
+    dir: "asc",
+  });
+  const [districtSort, setDistrictSort] = useState<{
+    field: SortField;
+    dir: SortDir;
+  }>({ field: "none", dir: "asc" });
 
-  const [daily, setDaily] = useState<TrafficDailyRow[]>([]);
-  const [gridLatest, setGridLatest] = useState<LatestAggRow[]>([]);
-  const [districtLatest, setDistrictLatest] = useState<LatestAggRow[]>([]);
+  /* -------- initial load: Regions + date bounds -------- */
 
-  // point-change state (normalized to non-nullable numbers)
-  const [gridChange, setGridChange] = useState<GridChangeRow[]>([]);
-  const [siteChange, setSiteChange] = useState<SiteChangeRow[]>([]);
-  const [selectedGrid, setSelectedGrid] = useState<string | null>(null);
-
-  //Sorting
-  const [siteSortKey, setSiteSortKey] = useState<
-    "data_delta_pct" | "voice_delta_pct"
-  >("data_delta_pct");
-  const [siteSortDir, setSiteSortDir] = useState<"asc" | "desc">("desc");
-
-  // dates (single header above Grid table)
-  const [latestDate, setLatestDate] = useState<string | null>(null);
-  const [oldDate, setOldDate] = useState<string | null>(null);
-
-  const [gridSortKey, setGridSortKey] = useState<SortKey>("total_gb");
-  const [gridSortDir, setGridSortDir] = useState<SortDir>("desc");
-  const [distSortKey, setDistSortKey] = useState<SortKey>("total_gb");
-  const [distSortDir, setDistSortDir] = useState<SortDir>("desc");
-
-  const [loading, setLoading] = useState<boolean>(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  // Load SubRegion options
   useEffect(() => {
-    (async () => {
+    const init = async () => {
       try {
-        const list = await fetchSubregions();
-        setSubs(list);
-      } catch (e) {
-        setErr((e as Error)?.message ?? "Failed to load subregions");
+        const [regions, bounds] = await Promise.all([
+          fetchRegions(),
+          fetchTrafficDateBounds(),
+        ]);
+        setRegionOptions(regions);
+
+        if (bounds && bounds.min_date && bounds.max_date) {
+          setFilters((prev) => ({
+            ...prev,
+            oldDate: bounds.min_date!,
+            newDate: bounds.max_date!,
+          }));
+        }
+      } catch (err) {
+        console.error("Initial load error:", err);
       }
-    })();
+    };
+    init();
   }, []);
 
-  // Fetch on SubRegion change
+  /* -------- when Region changes, load SubRegions -------- */
+
   useEffect(() => {
-    (async () => {
+    const loadSubregions = async () => {
       try {
-        setLoading(true);
-        setErr(null);
-        const sub = selectedSub === "__ALL__" ? null : selectedSub;
-
-        const [dArr, gArr, diArr, gChangeRaw] = await Promise.all([
-          fetchTrafficDaily({ date_from: null, date_to: null, subregion: sub }),
-          fetchLatestByGrid(sub),
-          fetchLatestByDistrict(sub),
-          fetchGridPointChange(sub), // returns nullable numbers + dates
-        ]);
-
-        setDaily(dArr);
-        setGridLatest(gArr);
-        setDistrictLatest(diArr);
-
-        // Capture dates for header (from the first row)
-        setLatestDate(gChangeRaw[0]?.latest_date ?? null);
-        setOldDate(gChangeRaw[0]?.prior_date ?? null);
-
-        // Normalize to non-null numbers
-        const gNorm: GridChangeRow[] = gChangeRaw.map((r) => ({
-          grid: r.grid,
-          data_old: Number(r.data_old ?? 0),
-          data_new: Number(r.data_new ?? 0),
-          data_delta: Number(
-            r.data_delta ?? (r.data_new ?? 0) - (r.data_old ?? 0)
-          ),
-          data_delta_pct:
-            r.data_delta_pct ??
-            (r.data_old
-              ? ((Number(r.data_new ?? 0) - Number(r.data_old ?? 0)) /
-                  Number(r.data_old)) *
-                100
-              : null),
-          voice_old: Number(r.voice_old ?? 0),
-          voice_new: Number(r.voice_new ?? 0),
-          voice_delta: Number(
-            r.voice_delta ?? (r.voice_new ?? 0) - (r.voice_old ?? 0)
-          ),
-          voice_delta_pct:
-            r.voice_delta_pct ??
-            (r.voice_old
-              ? ((Number(r.voice_new ?? 0) - Number(r.voice_old ?? 0)) /
-                  Number(r.voice_old)) *
-                100
-              : null),
-        }));
-        setGridChange(gNorm);
-
-        // reset site state
-        setSelectedGrid(null);
-        setSiteChange([]);
-      } catch (e) {
-        setErr((e as Error)?.message ?? "Failed to load data");
-        setDaily([]);
-        setGridLatest([]);
-        setDistrictLatest([]);
-        setGridChange([]);
-        setSelectedGrid(null);
-        setSiteChange([]);
-        setLatestDate(null);
-        setOldDate(null);
-      } finally {
-        setLoading(false);
+        if (filters.region === "ALL") {
+          setSubregionOptions([]);
+          setFilters((prev) => ({ ...prev, subregion: "ALL" }));
+          return;
+        }
+        const subs = await fetchSubregionsByRegion(filters.region as string);
+        setSubregionOptions(subs);
+        setFilters((prev) => ({ ...prev, subregion: "ALL" }));
+      } catch (err) {
+        console.error("loadSubregions error:", err);
       }
-    })();
-  }, [selectedSub]);
+    };
+    loadSubregions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.region]);
 
-  // When a grid is selected, fetch site point-change and normalize
-  useEffect(() => {
-    (async () => {
-      if (!selectedGrid) return;
-      try {
-        const sub = selectedSub === "__ALL__" ? null : selectedSub;
-        const rows = await fetchSitesPointChange(selectedGrid, sub); // nullable numbers + dates
+  /* -------- handlers -------- */
 
-        const sNorm: SiteChangeRow[] = rows.map((r) => ({
-          site_name: r.site_name,
-          site_class: r.site_class,
-          data_old: Number(r.data_old ?? 0),
-          data_new: Number(r.data_new ?? 0),
-          data_delta: Number(
-            r.data_delta ?? (r.data_new ?? 0) - (r.data_old ?? 0)
-          ),
-          data_delta_pct:
-            r.data_delta_pct ??
-            (r.data_old
-              ? ((Number(r.data_new ?? 0) - Number(r.data_old ?? 0)) /
-                  Number(r.data_old)) *
-                100
-              : null),
-          voice_old: Number(r.voice_old ?? 0),
-          voice_new: Number(r.voice_new ?? 0),
-          voice_delta: Number(
-            r.voice_delta ?? (r.voice_new ?? 0) - (r.voice_old ?? 0)
-          ),
-          voice_delta_pct:
-            r.voice_delta_pct ??
-            (r.voice_old
-              ? ((Number(r.voice_new ?? 0) - Number(r.voice_old ?? 0)) /
-                  Number(r.voice_old)) *
-                100
-              : null),
-        }));
-        setSiteChange(sNorm);
-      } catch (e) {
-        setErr((e as Error)?.message ?? "Failed to load sites");
-        setSiteChange([]);
+  const handleRegionChange = (value: RegionFilter) => {
+    setFilters((prev) => ({
+      ...prev,
+      region: value,
+      subregion: "ALL",
+    }));
+  };
+
+  const handleApply = async () => {
+    try {
+      setLoading(true);
+      setErrorMsg(null);
+
+      const regionParam =
+        filters.region === "ALL" ? null : (filters.region as string);
+      const subregionParam =
+        regionParam && filters.subregion !== "ALL" ? filters.subregion : null;
+
+      const baseParams = {
+        region: regionParam,
+        subregion: subregionParam,
+      };
+
+      const [ts, cmp, gridStats, distStats] = await Promise.all([
+        fetchTrafficTimeseries({
+          ...baseParams,
+          dateFrom: filters.oldDate,
+          dateTo: filters.newDate,
+        }),
+        fetchTrafficComparison({
+          ...baseParams,
+          oldDate: filters.oldDate,
+          newDate: filters.newDate,
+        }),
+        fetchTrafficGridChange(
+          regionParam,
+          subregionParam,
+          filters.oldDate,
+          filters.newDate
+        ),
+        fetchTrafficDistrictChange(
+          regionParam,
+          subregionParam,
+          filters.oldDate,
+          filters.newDate
+        ),
+      ]);
+
+      console.log("Traffic timeseries:", ts);
+      console.log("Traffic comparison:", cmp);
+      console.log("Traffic grid change:", gridStats);
+      console.log("Traffic district change:", distStats);
+
+      setTsData(ts);
+      setCompareRows(cmp);
+      setGridChangeRows(gridStats);
+      setDistrictChangeRows(distStats);
+
+      // reset sorts on fresh data
+      setGridSort({ field: "none", dir: "asc" });
+      setDistrictSort({ field: "none", dir: "asc" });
+    } catch (err) {
+      const e = err as Error;
+      console.error("handleApply error:", e);
+      setErrorMsg(e.message || "Failed to load traffic data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* -------- derived: average cards -------- */
+
+  const avgByIndicator = useMemo(() => {
+    const result: Record<string, number | null> = {};
+    INDICATORS.forEach((ind) => {
+      const values = tsData
+        .map((row) => row[ind.key] as number | null)
+        .filter((v): v is number => v != null);
+      if (!values.length) {
+        result[ind.metricCode] = null;
+      } else {
+        const sum = values.reduce((acc, v) => acc + v, 0);
+        result[ind.metricCode] = sum / values.length;
       }
-    })();
-  }, [selectedGrid, selectedSub]);
+    });
+    return result;
+  }, [tsData]);
 
-  /* ------------------------- Derived state ------------------------- */
-  const avgDataGB = useMemo(() => {
-    const n = daily.length || 1;
-    const sum = daily.reduce((s, r) => s + Number(r.total_gb ?? 0), 0);
-    return sum / n;
-  }, [daily]);
+  /* -------- sorting helpers -------- */
 
-  const avgVoiceErl = useMemo(() => {
-    const n = daily.length || 1;
-    const sum = daily.reduce((s, r) => s + Number(r.voice_erl ?? 0), 0);
-    return sum / n;
-  }, [daily]);
+  const toggleGridSort = (field: SortField) => {
+    if (field === "none") return;
+    setGridSort((prev) => {
+      if (prev.field !== field) {
+        return { field, dir: "asc" };
+      }
+      return { field, dir: prev.dir === "asc" ? "desc" : "asc" };
+    });
+  };
 
-  const gridRows = useMemo(
-    () => sortLatest(gridLatest, gridSortKey, gridSortDir),
-    [gridLatest, gridSortKey, gridSortDir]
-  );
-  const districtRows = useMemo(
-    () => sortLatest(districtLatest, distSortKey, distSortDir),
-    [districtLatest, distSortKey, distSortDir]
-  );
+  const toggleDistrictSort = (field: SortField) => {
+    if (field === "none") return;
+    setDistrictSort((prev) => {
+      if (prev.field !== field) {
+        return { field, dir: "asc" };
+      }
+      return { field, dir: prev.dir === "asc" ? "desc" : "asc" };
+    });
+  };
 
-  const series = useMemo(
-    () =>
-      daily.map((r) => ({
-        date: (r.date ?? "").slice(0, 10),
-        total_gb: Number(r.total_gb ?? 0),
-        voice_erl: Number(r.voice_erl ?? 0),
-      })),
-    [daily]
-  );
-
-  const sortedSiteChange = useMemo(() => {
-    const rows = [...siteChange];
-    const val = (x: number | null) => (x == null ? -Infinity : x);
+  const sortedGridRows = useMemo(() => {
+    if (gridSort.field === "none") return gridChangeRows;
+    const rows = [...gridChangeRows];
     rows.sort((a, b) => {
-      const av = val(a[siteSortKey]);
-      const bv = val(b[siteSortKey]);
-      return siteSortDir === "asc" ? av - bv : bv - av;
+      let av = 0;
+      let bv = 0;
+      if (gridSort.field === "voice") {
+        av = a.pct_change_voice ?? 0;
+        bv = b.pct_change_voice ?? 0;
+      } else if (gridSort.field === "data") {
+        av = a.pct_change_data ?? 0;
+        bv = b.pct_change_data ?? 0;
+      }
+      const diff = av - bv;
+      return gridSort.dir === "asc" ? diff : -diff;
     });
     return rows;
-  }, [siteChange, siteSortKey, siteSortDir]);
-  // maxima for heatbar backgrounds
-  const gridMax = useMemo(
-    () => ({
-      total_gb: Math.max(0, ...gridRows.map((r) => r.total_gb)),
-      voice_erl: Math.max(0, ...gridRows.map((r) => r.voice_erl)),
-    }),
-    [gridRows]
-  );
-  const distMax = useMemo(
-    () => ({
-      total_gb: Math.max(0, ...districtRows.map((r) => r.total_gb)),
-      voice_erl: Math.max(0, ...districtRows.map((r) => r.voice_erl)),
-    }),
-    [districtRows]
-  );
-  const varMax = useMemo(
-    () => ({
-      data: Math.max(0, ...gridChange.map((r) => Math.abs(r.data_delta))),
-      voice: Math.max(0, ...gridChange.map((r) => Math.abs(r.voice_delta))),
-    }),
-    [gridChange]
-  );
+  }, [gridChangeRows, gridSort]);
 
-  /* ------------------------------- Render ------------------------------- */
+  const sortedDistrictRows = useMemo(() => {
+    if (districtSort.field === "none") return districtChangeRows;
+    const rows = [...districtChangeRows];
+    rows.sort((a, b) => {
+      let av = 0;
+      let bv = 0;
+      if (districtSort.field === "voice") {
+        av = a.pct_change_voice ?? 0;
+        bv = b.pct_change_voice ?? 0;
+      } else if (districtSort.field === "data") {
+        av = a.pct_change_data ?? 0;
+        bv = b.pct_change_data ?? 0;
+      }
+      const diff = av - bv;
+      return districtSort.dir === "asc" ? diff : -diff;
+    });
+    return rows;
+  }, [districtChangeRows, districtSort]);
+
+  /* -------- download handlers -------- */
+
+  const handleDownloadSummary = () => {
+    if (!compareRows.length) return;
+    const headers = [
+      "Indicator",
+      `Earliest (${filters.oldDate})`,
+      `Latest (${filters.newDate})`,
+      "% Change",
+    ];
+    const rows = compareRows.map((row) => [
+      row.metric_label,
+      row.old_value ?? "",
+      row.new_value ?? "",
+      row.pct_change ?? "",
+    ]);
+    downloadCsv(
+      `traffic_indicator_summary_${filters.oldDate}_${filters.newDate}.csv`,
+      headers,
+      rows
+    );
+  };
+
+  const handleDownloadGrid = () => {
+    if (!sortedGridRows.length) return;
+    const headers = [
+      "Grid",
+      `Earliest Voice (${filters.oldDate})`,
+      `Latest Voice (${filters.newDate})`,
+      "% Voice",
+      `Earliest Data (${filters.oldDate})`,
+      `Latest Data (${filters.newDate})`,
+      "% Data",
+    ];
+    const rows = sortedGridRows.map((row) => [
+      row.grid ?? "",
+      row.old_total_voice_erl ?? "",
+      row.new_total_voice_erl ?? "",
+      row.pct_change_voice ?? "",
+      row.old_total_data_gb ?? "",
+      row.new_total_data_gb ?? "",
+      row.pct_change_data ?? "",
+    ]);
+    downloadCsv(
+      `traffic_grid_summary_${filters.oldDate}_${filters.newDate}.csv`,
+      headers,
+      rows
+    );
+  };
+
+  const handleDownloadDistrict = () => {
+    if (!sortedDistrictRows.length) return;
+    const headers = [
+      "District",
+      `Earliest Voice (${filters.oldDate})`,
+      `Latest Voice (${filters.newDate})`,
+      "% Voice",
+      `Earliest Data (${filters.oldDate})`,
+      `Latest Data (${filters.newDate})`,
+      "% Data",
+    ];
+    const rows = sortedDistrictRows.map((row) => [
+      row.district ?? "",
+      row.old_total_voice_erl ?? "",
+      row.new_total_voice_erl ?? "",
+      row.pct_change_voice ?? "",
+      row.old_total_data_gb ?? "",
+      row.new_total_data_gb ?? "",
+      row.pct_change_data ?? "",
+    ]);
+    downloadCsv(
+      `traffic_district_summary_${filters.oldDate}_${filters.newDate}.csv`,
+      headers,
+      rows
+    );
+  };
+
+  /* -------- render -------- */
+
   return (
     <div className="p-4 space-y-4">
-      {/* Header + SubRegion select */}
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">
-          Network Traffic — Latest Totals, Point Change (30d) & Daily Series
-        </h1>
-        <div className="ml-auto flex items-center gap-2">
-          <label className="text-sm text-gray-600">SubRegion</label>
-          <select
-            className="border rounded p-2 bg-white"
-            value={selectedSub}
-            onChange={(e) => setSelectedSub(e.target.value)}
-          >
-            <option value="__ALL__">All</option>
-            {subs.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
+      <h1 className="text-2xl font-semibold text-center">Traffic Analytics</h1>
+
+      {/* Filters */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Filters</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            {/* Region */}
+            <div className="space-y-1">
+              <Label>Region</Label>
+              <Select
+                value={filters.region}
+                onValueChange={(v) => handleRegionChange(v as RegionFilter)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select Region" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">ALL (Full Network)</SelectItem>
+                  {regionOptions.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* SubRegion */}
+            <div className="space-y-1">
+              <Label>SubRegion</Label>
+              <Select
+                value={filters.subregion}
+                onValueChange={(v) =>
+                  setFilters((prev) => ({ ...prev, subregion: v }))
+                }
+                disabled={filters.region === "ALL"}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="All SubRegions" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All</SelectItem>
+                  {subregionOptions.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Dates */}
+            <div className="space-y-1">
+              <Label>Earliest date</Label>
+              <Input
+                type="date"
+                value={filters.oldDate}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, oldDate: e.target.value }))
+                }
+              />
+              <Label className="mt-2 block">Latest date</Label>
+              <Input
+                type="date"
+                value={filters.newDate}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, newDate: e.target.value }))
+                }
+              />
+            </div>
+          </div>
+
+          <Button onClick={handleApply} disabled={loading}>
+            {loading ? "Loading..." : "Apply filters"}
+          </Button>
+          {errorMsg && <p className="text-sm text-red-600 mt-2">{errorMsg}</p>}
+        </CardContent>
+      </Card>
+
+      {/* Average indicator cards */}
+      <div className="grid gap-4 md:grid-cols-4">
+        {INDICATORS.map((ind) => {
+          const avgVal = avgByIndicator[ind.metricCode];
+          const isVoice = ind.group === "Voice";
+          const cardBg = isVoice
+            ? "bg-blue-50 border-blue-100"
+            : "bg-emerald-50 border-emerald-100";
+          const labelColor = isVoice ? "text-blue-900" : "text-emerald-900";
+          const valueColor = isVoice ? "text-blue-800" : "text-emerald-800";
+
+          return (
+            <Card key={ind.metricCode} className={cardBg}>
+              <CardHeader className="pb-2">
+                <CardTitle className={`text-sm font-semibold ${labelColor}`}>
+                  {ind.label} (Average)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className={`text-2xl font-semibold ${valueColor}`}>
+                  {avgVal != null ? formatNumberCompact(avgVal) : "—"}
+                </div>
+                <p className="text-xs text-slate-600">{ind.group} indicator</p>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
-      {loading && <div className="text-sm text-gray-500">Loading…</div>}
-      {err && <div className="text-sm text-red-600">Error: {err}</div>}
+      {/* Tabular summary (all rows visible) */}
+      <Card>
+        <CardHeader className="flex items-center justify-between gap-2">
+          <CardTitle>
+            Indicator Summary – Earliest date {filters.oldDate} vs Latest date{" "}
+            {filters.newDate}
+          </CardTitle>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleDownloadSummary}
+            disabled={!compareRows.length}
+          >
+            Download CSV
+          </Button>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          {compareRows.length === 0 ? (
+            <p className="text-base text-muted-foreground">
+              Apply filters to see indicator-level summary.
+            </p>
+          ) : (
+            <table className="w-full text-base border-collapse">
+              <thead>
+                <tr className="border-b bg-slate-50">
+                  <th className="text-left p-2 font-semibold">Indicator</th>
+                  <th className="text-right p-2 font-semibold">
+                    Earliest date
+                  </th>
+                  <th className="text-right p-2 font-semibold">Latest date</th>
+                  <th className="text-right p-2 font-semibold">% Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compareRows.map((row) => {
+                  const oldVal = row.old_value ?? 0;
+                  const newVal = row.new_value ?? 0;
+                  const pct = row.pct_change;
 
-      {/* KPI cards */}
-      {!loading && !err && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-2xl p-4 shadow-sm border bg-white/60">
-            <div className="text-xs text-gray-500 mb-1">Days</div>
-            <div className="text-2xl font-semibold">{daily.length}</div>
-          </div>
-          <div className="rounded-2xl p-4 shadow-sm border bg-white/60">
-            <div className="text-xs text-gray-500 mb-1">Net Average Data</div>
-            <div className="text-2xl font-semibold">
-              {nf2.format(avgDataGB)} GB/day
-            </div>
-          </div>
-          <div className="rounded-2xl p-4 shadow-sm border bg-white/60">
-            <div className="text-xs text-gray-500 mb-1">Net Average Voice</div>
-            <div className="text-2xl font-semibold">
-              {nf2.format(avgVoiceErl)} Erl/day
-            </div>
-          </div>
-        </div>
-      )}
+                  let arrow = null;
+                  let pctClass = "text-slate-700 bg-slate-50";
+                  let pctText = "—";
 
-      {/* Point-change by Grid + Sites in selected Grid */}
-      {/* Point-change by Grid + Sites in selected Grid */}
-      {!loading && !err && (
-        <div className="grid grid-cols-1 gap-4">
-          {/* Grid Point-Change */}
-          <div className="rounded-2xl border bg-white/60">
-            <div className="px-4 py-3 border-b">
-              <div className="font-medium">
-                Latest vs 30 Days Earlier — by Grid
-              </div>
-              <div className="text-xs text-gray-600 mt-1">
-                Latest: <span className="font-medium">{latestDate ?? "-"}</span>
-                <span className="mx-2">•</span>
-                Old: <span className="font-medium">{oldDate ?? "-"}</span>
-              </div>
-            </div>
-
-            {/* ~12 rows viewport */}
-            <div className="max-h-[580px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white/90 backdrop-blur z-10">
-                  <tr className="[&>th]:px-3 [&>th]:py-2 text-left text-gray-600">
-                    <th style={{ width: 36 }}>#</th>
-                    <th>Grid</th>
-                    <th className="text-right">Data Old</th>
-                    <th className="text-right">Data New</th>
-                    <th className="text-right">Δ Data</th>
-                    <th className="text-right">% Data</th>
-                    <th className="text-right">Voice Old</th>
-                    <th className="text-right">Voice New</th>
-                    <th className="text-right">Δ Voice</th>
-                    <th className="text-right">% Voice</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gridChange.map((r, idx) => (
-                    <tr
-                      key={`${r.grid || "UNKNOWN"}-${idx}`}
-                      className={`border-t cursor-pointer ${
-                        selectedGrid === r.grid ? "bg-blue-50" : ""
-                      }`}
-                      onClick={() => setSelectedGrid(r.grid)}
-                      title="Click to see sites"
-                    >
-                      <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
-                      <td className="px-3 py-2">{r.grid}</td>
-
-                      <td className="px-3 py-2 text-right">
-                        {nf2.format(r.data_old)}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {nf2.format(r.data_new)}
-                      </td>
-                      <td
-                        className="px-3 py-2 text-right rounded-sm"
-                        style={cellGradientStyle(
-                          Math.abs(r.data_delta),
-                          Math.max(1, varMax.data),
-                          "data"
-                        )}
-                      >
-                        {r.data_delta > 0 ? (
-                          <span className="text-green-600">▲</span>
-                        ) : r.data_delta < 0 ? (
-                          <span className="text-red-600">▼</span>
-                        ) : (
-                          <span className="text-gray-400">•</span>
-                        )}
-                        &nbsp;{nf2.format(r.data_delta)}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {r.data_delta_pct == null
-                          ? "-"
-                          : `${nf2.format(r.data_delta_pct)}%`}
-                      </td>
-
-                      <td className="px-3 py-2 text-right">
-                        {nf2.format(r.voice_old)}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {nf2.format(r.voice_new)}
-                      </td>
-                      <td
-                        className="px-3 py-2 text-right rounded-sm"
-                        style={cellGradientStyle(
-                          Math.abs(r.voice_delta),
-                          Math.max(1, varMax.voice),
-                          "voice"
-                        )}
-                      >
-                        {r.voice_delta > 0 ? (
-                          <span className="text-green-600">▲</span>
-                        ) : r.voice_delta < 0 ? (
-                          <span className="text-red-600">▼</span>
-                        ) : (
-                          <span className="text-gray-400">•</span>
-                        )}
-                        &nbsp;{nf2.format(r.voice_delta)}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {r.voice_delta_pct == null
-                          ? "-"
-                          : `${nf2.format(r.voice_delta_pct)}%`}
-                      </td>
-                    </tr>
-                  ))}
-                  {gridChange.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={10}
-                        className="px-4 py-6 text-center text-gray-500"
-                      >
-                        No data
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Sites for selected Grid (Point-Change) */}
-          <div className="rounded-2xl border bg-white/60">
-            <div className="px-4 py-3 border-b flex items-center gap-3">
-              <span className="font-medium">
-                Sites — {selectedGrid ? selectedGrid : "Select a Grid"}
-              </span>
-              <div className="ml-auto flex items-center gap-2 text-sm">
-                <label>Sort:</label>
-                <select
-                  className="border rounded p-1 bg-white"
-                  value={siteSortKey}
-                  onChange={(e) =>
-                    setSiteSortKey(
-                      e.target.value as "data_delta_pct" | "voice_delta_pct"
-                    )
+                  if (pct != null) {
+                    pctText = `${pct.toFixed(2)} %`;
+                    if (pct > 0) {
+                      arrow = <ArrowUpRight className="w-4 h-4 mr-1" />;
+                      pctClass = "text-green-700 bg-green-50";
+                    } else if (pct < 0) {
+                      arrow = <ArrowDownRight className="w-4 h-4 mr-1" />;
+                      pctClass = "text-red-700 bg-red-50";
+                    }
                   }
-                  title="Sort sites by percentage change"
-                >
-                  <option value="data_delta_pct">% Data</option>
-                  <option value="voice_delta_pct">% Voice</option>
-                </select>
-                <button
-                  className="border rounded px-2 py-1"
-                  onClick={() =>
-                    setSiteSortDir((d) => (d === "desc" ? "asc" : "desc"))
-                  }
-                  title="Toggle ASC/DESC"
-                >
-                  {siteSortDir.toUpperCase()}
-                </button>
-              </div>
-            </div>
 
-            {/* ~12 rows viewport */}
-            <div className="max-h-[580px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white/90 backdrop-blur z-10">
-                  <tr className="[&>th]:px-3 [&>th]:py-2 text-left text-gray-600">
-                    <th style={{ width: 36 }}>#</th>
-                    <th>Site</th>
-                    <th>Class</th>
-                    <th className="text-right">Data Old</th>
-                    <th className="text-right">Data New</th>
-                    <th className="text-right">Δ Data</th>
-                    <th className="text-right">% Data</th>
-                    <th className="text-right">Voice Old</th>
-                    <th className="text-right">Voice New</th>
-                    <th className="text-right">Δ Voice</th>
-                    <th className="text-right">% Voice</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedGrid &&
-                    sortedSiteChange.map((r, idx) => (
-                      <tr
-                        key={`${r.site_name || "UNKNOWN"}-${idx}`}
-                        className="border-t cursor-pointer hover:bg-blue-50"
-                        onClick={() => openSite(r.site_name)}
-                        title="Open Site Analytics in a new tab"
-                      >
-                        <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
-
-                        {/* Make the Site column an explicit link too (accessibility + affordance) */}
-                        <td className="px-3 py-2">
-                          <a
-                            href={`/sitequery/${encodeURIComponent(
-                              r.site_name || "UNKNOWN"
-                            )}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()} // prevent double open
-                            className="text-blue-600 hover:underline"
-                            title="Open Site Analytics in a new tab"
-                          >
-                            {r.site_name}
-                          </a>
-                        </td>
-
-                        <td className="px-3 py-2">{r.site_class}</td>
-
-                        <td className="px-3 py-2 text-right">
-                          {nf2.format(r.data_old)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          {nf2.format(r.data_new)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          {r.data_delta > 0 ? (
-                            <span className="text-green-600">▲</span>
-                          ) : r.data_delta < 0 ? (
-                            <span className="text-red-600">▼</span>
-                          ) : (
-                            <span className="text-gray-400">•</span>
-                          )}
-                          &nbsp;{nf2.format(r.data_delta)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          {r.data_delta_pct == null
-                            ? "-"
-                            : `${nf2.format(r.data_delta_pct)}%`}
-                        </td>
-
-                        <td className="px-3 py-2 text-right">
-                          {nf2.format(r.voice_old)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          {nf2.format(r.voice_new)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          {r.voice_delta > 0 ? (
-                            <span className="text-green-600">▲</span>
-                          ) : r.voice_delta < 0 ? (
-                            <span className="text-red-600">▼</span>
-                          ) : (
-                            <span className="text-gray-400">•</span>
-                          )}
-                          &nbsp;{nf2.format(r.voice_delta)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          {r.voice_delta_pct == null
-                            ? "-"
-                            : `${nf2.format(r.voice_delta_pct)}%`}
-                        </td>
-                      </tr>
-                    ))}
-                  {!selectedGrid && (
-                    <tr>
-                      <td
-                        colSpan={11}
-                        className="px-4 py-6 text-center text-gray-500"
-                      >
-                        Click a grid on the left to load sites
+                  return (
+                    <tr key={row.metric_code} className="border-b">
+                      <td className="p-2 font-medium">{row.metric_label}</td>
+                      <td className="p-2 text-right bg-slate-50 font-medium">
+                        {formatNumberStd(oldVal)}
+                      </td>
+                      <td className="p-2 text-right bg-slate-50 font-medium">
+                        {formatNumberStd(newVal)}
+                      </td>
+                      <td className="p-2 text-right">
+                        <span
+                          className={`inline-flex items-center justify-end px-2 py-1 rounded text-sm font-semibold ${pctClass}`}
+                        >
+                          {arrow}
+                          <span>{pctText}</span>
+                        </span>
                       </td>
                     </tr>
-                  )}
-                  {selectedGrid && siteChange.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={11}
-                        className="px-4 py-6 text-center text-gray-500"
-                      >
-                        No sites found for this grid
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Latest by District / Grid (unchanged core) */}
-      {!loading && !err && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* District table */}
-          <div className="rounded-2xl border bg-white/60">
-            <div className="px-4 py-3 border-b flex items-center gap-3">
-              <span className="font-medium">Latest Totals — by District</span>
-              <div className="ml-auto flex items-center gap-2 text-sm">
-                <label>Sort:</label>
-                <select
-                  className="border rounded p-1"
-                  value={distSortKey}
-                  onChange={(e) => setDistSortKey(e.target.value as SortKey)}
-                >
-                  <option value="total_gb">Total GB</option>
-                  <option value="voice_erl">Voice Erl</option>
-                </select>
-                <button
-                  className="border rounded px-2 py-1"
-                  onClick={() =>
-                    setDistSortDir((d) => (d === "desc" ? "asc" : "desc"))
-                  }
-                  title="Toggle ASC/DESC"
-                >
-                  {distSortDir.toUpperCase()}
-                </button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="sticky top-0 bg-white/90 backdrop-blur z-10">
-                  <tr className="[&>th]:px-4 [&>th]:py-2 text-left text-gray-600">
-                    <th style={{ width: 48 }}>#</th>
-                    <th>District</th>
-                    <th>Date</th>
-                    <th className="text-right">Total GB</th>
-                    <th className="text-right">Voice Erl</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {districtRows.map((r, idx) => (
-                    <tr key={`${r.key}-${r.latest_date}`} className="border-t">
-                      <td className="px-4 py-2 text-gray-500">{idx + 1}</td>
-                      <td className="px-4 py-2">{r.key}</td>
-                      <td className="px-4 py-2">{r.latest_date}</td>
-                      <td
-                        className="px-4 py-2 text-right"
-                        style={cellGradientStyle(
-                          Math.abs(r.total_gb),
-                          Math.max(
-                            1,
-                            ...districtRows.map((x) => Math.abs(x.total_gb))
-                          ),
-                          "data"
-                        )}
-                      >
-                        {nf2.format(r.total_gb)}
-                      </td>
-                      <td
-                        className="px-4 py-2 text-right"
-                        style={cellGradientStyle(
-                          Math.abs(r.voice_erl),
-                          Math.max(
-                            1,
-                            ...districtRows.map((x) => Math.abs(x.voice_erl))
-                          ),
-                          "voice"
-                        )}
-                      >
-                        {nf2.format(r.voice_erl)}
-                      </td>
-                    </tr>
-                  ))}
-                  {districtRows.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-6 text-center text-gray-500"
-                      >
-                        No data
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Grid totals table */}
-          <div className="rounded-2xl border bg-white/60">
-            <div className="px-4 py-3 border-b flex items-center gap-3">
-              <span className="font-medium">Latest Totals — by Grid</span>
-              <div className="ml-auto flex items-center gap-2 text-sm">
-                <label>Sort:</label>
-                <select
-                  className="border rounded p-1"
-                  value={gridSortKey}
-                  onChange={(e) => setGridSortKey(e.target.value as SortKey)}
-                >
-                  <option value="total_gb">Total GB</option>
-                  <option value="voice_erl">Voice Erl</option>
-                </select>
-                <button
-                  className="border rounded px-2 py-1"
-                  onClick={() =>
-                    setGridSortDir((d) => (d === "desc" ? "asc" : "desc"))
-                  }
-                  title="Toggle ASC/DESC"
-                >
-                  {gridSortDir.toUpperCase()}
-                </button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="sticky top-0 bg-white/90 backdrop-blur z-10">
-                  <tr className="[&>th]:px-4 [&>th]:py-2 text-left text-gray-600">
-                    <th style={{ width: 48 }}>#</th>
-                    <th>Grid</th>
-                    <th>Date</th>
-                    <th className="text-right">Total GB</th>
-                    <th className="text-right">Voice Erl</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gridRows.map((r, idx) => (
-                    <tr key={`${r.key}-${r.latest_date}`} className="border-t">
-                      <td className="px-4 py-2 text-gray-500">{idx + 1}</td>
-                      <td className="px-4 py-2">{r.key}</td>
-                      <td className="px-4 py-2">{r.latest_date}</td>
-                      <td
-                        className="px-4 py-2 text-right"
-                        style={cellGradientStyle(
-                          Math.abs(r.total_gb),
-                          Math.max(
-                            1,
-                            ...gridRows.map((x) => Math.abs(x.total_gb))
-                          ),
-                          "data"
-                        )}
-                      >
-                        {nf2.format(r.total_gb)}
-                      </td>
-                      <td
-                        className="px-4 py-2 text-right"
-                        style={cellGradientStyle(
-                          Math.abs(r.voice_erl),
-                          Math.max(
-                            1,
-                            ...gridRows.map((x) => Math.abs(x.voice_erl))
-                          ),
-                          "voice"
-                        )}
-                      >
-                        {nf2.format(r.voice_erl)}
-                      </td>
-                    </tr>
-                  ))}
-                  {gridRows.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-6 text-center text-gray-500"
-                      >
-                        No data
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Area charts */}
-      {!loading && !err && series.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[
-            { key: "total_gb", label: "Total Data (GB)", color: "#2563eb" },
-            { key: "voice_erl", label: "Total Voice (Erl)", color: "#16a34a" },
-          ].map(({ key, label, color }) => {
-            const gradId = `fill-${key}`;
-            return (
-              <div key={key} className="rounded-2xl border bg-white/60 p-4">
-                <div className="text-sm text-gray-600 mb-2">
-                  {label}{" "}
-                  {selectedSub !== "__ALL__"
-                    ? `— ${selectedSub}`
-                    : "— All SubRegions"}
-                </div>
-                <div style={{ width: "100%", height: 260 }}>
-                  <ResponsiveContainer>
-                    <AreaChart
-                      data={series}
-                      margin={{ top: 10, right: 20, left: 0, bottom: 10 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                      <XAxis
-                        dataKey="date"
-                        type="category"
-                        allowDuplicatedCategory={false}
-                        tick={{ fontSize: 12 }}
-                      />
-                      <YAxis tick={{ fontSize: 12 }} tickFormatter={yTickFmt} />
-                      <Tooltip
-                        formatter={(v) => tipFmt(v)}
-                        labelFormatter={tipLabelFmt}
-                      />
-                      <Legend />
-                      <defs>
-                        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                          <stop
-                            offset="0%"
-                            stopColor={color}
-                            stopOpacity={0.55}
+      {/* Grid & District level tables */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Grid level */}
+        <Card>
+          <CardHeader className="flex items-center justify-between gap-2">
+            <CardTitle className="text-base font-semibold">
+              Grid-level Total Voice & Data – Earliest vs Latest
+            </CardTitle>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDownloadGrid}
+              disabled={!sortedGridRows.length}
+            >
+              Download CSV
+            </Button>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {sortedGridRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No grid-level data for selected filters.
+              </p>
+            ) : (
+              // CHANGED: increase max height so ~14 rows visible
+              <div className="max-h-[30rem] overflow-y-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b bg-slate-50">
+                      <th className="text-left p-2 font-semibold">Grid</th>
+                      <th className="text-right p-2 font-semibold">
+                        Earliest Voice
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        Latest Voice
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => toggleGridSort("voice")}
+                        >
+                          <span>% Voice</span>
+                          <ArrowUpDown
+                            className={`w-3 h-3 ${
+                              gridSort.field === "voice"
+                                ? "text-slate-900"
+                                : "text-slate-400"
+                            }`}
                           />
-                          <stop
-                            offset="100%"
-                            stopColor={color}
-                            stopOpacity={0.05}
+                        </button>
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        Earliest Data
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        Latest Data
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => toggleGridSort("data")}
+                        >
+                          <span>% Data</span>
+                          <ArrowUpDown
+                            className={`w-3 h-3 ${
+                              gridSort.field === "data"
+                                ? "text-slate-900"
+                                : "text-slate-400"
+                            }`}
                           />
-                        </linearGradient>
-                      </defs>
-                      <Area
-                        type="monotone"
-                        dataKey={key as "total_gb" | "voice_erl"}
-                        name={label}
-                        stroke={color}
-                        fill={`url(#${gradId})`}
-                        strokeWidth={2}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
+                        </button>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedGridRows.map((row, idx) => {
+                      const oldV = row.old_total_voice_erl ?? 0;
+                      const newV = row.new_total_voice_erl ?? 0;
+                      const pctV = row.pct_change_voice;
+
+                      const oldD = row.old_total_data_gb ?? 0;
+                      const newD = row.new_total_data_gb ?? 0;
+                      const pctD = row.pct_change_data;
+
+                      const voicePctClass =
+                        pctV == null
+                          ? "bg-slate-50 text-slate-700"
+                          : pctV > 0
+                          ? "bg-green-50 text-green-700"
+                          : pctV < 0
+                          ? "bg-red-50 text-red-700"
+                          : "bg-slate-50 text-slate-700";
+
+                      const dataPctClass =
+                        pctD == null
+                          ? "bg-slate-50 text-slate-700"
+                          : pctD > 0
+                          ? "bg-green-50 text-green-700"
+                          : pctD < 0
+                          ? "bg-red-50 text-red-700"
+                          : "bg-slate-50 text-slate-700";
+
+                      let voiceArrow = null;
+                      if (pctV != null) {
+                        if (pctV > 0) {
+                          voiceArrow = (
+                            <ArrowUpRight className="w-3 h-3 mr-1" />
+                          );
+                        } else if (pctV < 0) {
+                          voiceArrow = (
+                            <ArrowDownRight className="w-3 h-3 mr-1" />
+                          );
+                        }
+                      }
+
+                      let dataArrow = null;
+                      if (pctD != null) {
+                        if (pctD > 0) {
+                          dataArrow = <ArrowUpRight className="w-3 h-3 mr-1" />;
+                        } else if (pctD < 0) {
+                          dataArrow = (
+                            <ArrowDownRight className="w-3 h-3 mr-1" />
+                          );
+                        }
+                      }
+
+                      return (
+                        <tr
+                          key={`${row.grid ?? "N/A"}-${idx}`}
+                          className="border-b"
+                        >
+                          <td className="p-2 font-medium">
+                            {row.grid ?? "N/A"}
+                          </td>
+                          <td className="p-2 text-right bg-slate-50 font-medium">
+                            {formatNumberStd(oldV)}
+                          </td>
+                          <td className="p-2 text-right bg-slate-50 font-medium">
+                            {formatNumberStd(newV)}
+                          </td>
+                          <td className="p-2 text-right">
+                            <span
+                              className={`inline-flex items-center justify-end px-1 py-0.5 rounded text-xs font-semibold ${voicePctClass}`}
+                            >
+                              {voiceArrow}
+                              {pctV != null ? `${pctV.toFixed(1)}%` : "—"}
+                            </span>
+                          </td>
+                          <td className="p-2 text-right bg-slate-50 font-medium">
+                            {formatNumberStd(oldD)}
+                          </td>
+                          <td className="p-2 text-right bg-slate-50 font-medium">
+                            {formatNumberStd(newD)}
+                          </td>
+                          <td className="p-2 text-right">
+                            <span
+                              className={`inline-flex items-center justify-end px-1 py-0.5 rounded text-xs font-semibold ${dataPctClass}`}
+                            >
+                              {dataArrow}
+                              {pctD != null ? `${pctD.toFixed(1)}%` : "—"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
+          </CardContent>
+        </Card>
+
+        {/* District level */}
+        <Card>
+          <CardHeader className="flex items-center justify-between gap-2">
+            <CardTitle className="text-base font-semibold">
+              District-level Total Voice & Data – Earliest vs Latest
+            </CardTitle>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDownloadDistrict}
+              disabled={!sortedDistrictRows.length}
+            >
+              Download CSV
+            </Button>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {sortedDistrictRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No district-level data for selected filters.
+              </p>
+            ) : (
+              // CHANGED: increase max height so ~14 rows visible
+              <div className="max-h-[30rem] overflow-y-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b bg-slate-50">
+                      <th className="text-left p-2 font-semibold">District</th>
+                      <th className="text-right p-2 font-semibold">
+                        Earliest Voice
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        Latest Voice
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => toggleDistrictSort("voice")}
+                        >
+                          <span>% Voice</span>
+                          <ArrowUpDown
+                            className={`w-3 h-3 ${
+                              districtSort.field === "voice"
+                                ? "text-slate-900"
+                                : "text-slate-400"
+                            }`}
+                          />
+                        </button>
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        Earliest Data
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        Latest Data
+                      </th>
+                      <th className="text-right p-2 font-semibold">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => toggleDistrictSort("data")}
+                        >
+                          <span>% Data</span>
+                          <ArrowUpDown
+                            className={`w-3 h-3 ${
+                              districtSort.field === "data"
+                                ? "text-slate-900"
+                                : "text-slate-400"
+                            }`}
+                          />
+                        </button>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedDistrictRows.map((row, idx) => {
+                      const oldV = row.old_total_voice_erl ?? 0;
+                      const newV = row.new_total_voice_erl ?? 0;
+                      const pctV = row.pct_change_voice;
+
+                      const oldD = row.old_total_data_gb ?? 0;
+                      const newD = row.new_total_data_gb ?? 0;
+                      const pctD = row.pct_change_data;
+
+                      const voicePctClass =
+                        pctV == null
+                          ? "bg-slate-50 text-slate-700"
+                          : pctV > 0
+                          ? "bg-green-50 text-green-700"
+                          : pctV < 0
+                          ? "bg-red-50 text-red-700"
+                          : "bg-slate-50 text-slate-700";
+
+                      const dataPctClass =
+                        pctD == null
+                          ? "bg-slate-50 text-slate-700"
+                          : pctD > 0
+                          ? "bg-green-50 text-green-700"
+                          : pctD < 0
+                          ? "bg-red-50 text-red-700"
+                          : "bg-slate-50 text-slate-700";
+
+                      let voiceArrow = null;
+                      if (pctV != null) {
+                        if (pctV > 0) {
+                          voiceArrow = (
+                            <ArrowUpRight className="w-3 h-3 mr-1" />
+                          );
+                        } else if (pctV < 0) {
+                          voiceArrow = (
+                            <ArrowDownRight className="w-3 h-3 mr-1" />
+                          );
+                        }
+                      }
+
+                      let dataArrow = null;
+                      if (pctD != null) {
+                        if (pctD > 0) {
+                          dataArrow = <ArrowUpRight className="w-3 h-3 mr-1" />;
+                        } else if (pctD < 0) {
+                          dataArrow = (
+                            <ArrowDownRight className="w-3 h-3 mr-1" />
+                          );
+                        }
+                      }
+
+                      return (
+                        <tr
+                          key={`${row.district ?? "N/A"}-${idx}`}
+                          className="border-b"
+                        >
+                          <td className="p-2 font-medium">
+                            {row.district ?? "N/A"}
+                          </td>
+                          <td className="p-2 text-right bg-slate-50 font-medium">
+                            {formatNumberStd(oldV)}
+                          </td>
+                          <td className="p-2 text-right bg-slate-50 font-medium">
+                            {formatNumberStd(newV)}
+                          </td>
+                          <td className="p-2 text-right">
+                            <span
+                              className={`inline-flex items-center justify-end px-1 py-0.5 rounded text-xs font-semibold ${voicePctClass}`}
+                            >
+                              {voiceArrow}
+                              {pctV != null ? `${pctV.toFixed(1)}%` : "—"}
+                            </span>
+                          </td>
+                          <td className="p-2 text-right bg-slate-50 font-medium">
+                            {formatNumberStd(oldD)}
+                          </td>
+                          <td className="p-2 text-right bg-slate-50 font-medium">
+                            {formatNumberStd(newD)}
+                          </td>
+                          <td className="p-2 text-right">
+                            <span
+                              className={`inline-flex items-center justify-end px-1 py-0.5 rounded text-xs font-semibold ${dataPctClass}`}
+                            >
+                              {dataArrow}
+                              {pctD != null ? `${pctD.toFixed(1)}%` : "—"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Indicator charts grid – one per indicator */}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {INDICATORS.map((ind) => (
+          <Card key={ind.metricCode}>
+            <CardHeader>
+              <CardTitle className="text-base font-semibold">
+                {ind.label}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="h-64">
+              {tsData.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No data yet. Apply filters above.
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={tsData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="dt" />
+                    <YAxis
+                      tickFormatter={(v) => formatNumberCompact(v as number)}
+                    />
+                    <Tooltip
+                      formatter={(value) => formatNumberStd(value as number)}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey={ind.key}
+                      name={ind.label}
+                      dot={false}
+                      strokeWidth={2}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }
