@@ -17,7 +17,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/eas", label: "EAS" },
   { href: "/isp", label: "ISP" },
   { href: "/CU", label: "Cell Utilization" },
-
+  { href: "/RANExpansion", label: "RAN Expansion" },
   { href: "/PSCore/Subscribers", label: "PSCore-Subs" },
   { href: "/PSCore/Traffic", label: "PSCore-Traffic" },
 ];

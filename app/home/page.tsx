@@ -16,10 +16,10 @@ const TILES = [
     img: "/images/avail.jpg",
   },
   {
-    key: "Cell utilization",
-    href: "/CU",
-    title: "EUTRAN",
-    subtitle: "High-utilization insights",
+    key: "RAN Expansion",
+    href: "/RANExpansion",
+    title: "RAN Expansion",
+    subtitle: "Traffic Insights insights",
     img: "/images/highU.jpg",
   },
 

@@ -173,22 +173,79 @@ export async function fetchTrafficTimeseries(
 
   console.log("[Traffic] fetchTrafficTimeseries params:", params);
 
-  const { data, error } = await supabase.rpc("fetch_traffic_timeseries", {
-    in_region: region ?? null,
-    in_subregion: subregion ?? null,
-    in_district: district ?? null,
-    in_grid: grid ?? null,
-    in_date_from: dateFrom ?? null,
-    in_date_to: dateTo ?? null,
-  });
-
-  if (error) {
-    console.error("fetchTrafficTimeseries error:", error);
-    throw new Error(error.message);
+  // 0) Hard guard: no date → don't smash full 5.1M table
+  if (!dateFrom || !dateTo) {
+    console.warn(
+      "[Traffic] fetchTrafficTimeseries called without dateFrom/dateTo – returning []"
+    );
+    return [];
   }
 
-  console.log("[Traffic] Timeseries rows:", data);
-  return (data ?? []) as TrafficTimeseriesRow[];
+  // 1) Split the date range into smaller chunks (7 days each)
+  const ranges = splitDateRangeIntoChunks(dateFrom, dateTo, 7);
+
+  if (!ranges.length) {
+    console.warn(
+      "[Traffic] fetchTrafficTimeseries – no valid ranges produced, returning []"
+    );
+    return [];
+  }
+
+  const allRows: TrafficTimeseriesRow[] = [];
+
+  // 2) Call RPC sequentially per chunk
+  for (const range of ranges) {
+    console.log(
+      "[Traffic] fetchTrafficTimeseries chunk:",
+      range.from,
+      "->",
+      range.to
+    );
+
+    const { data, error } = await supabase.rpc("fetch_traffic_timeseries", {
+      in_region: region ?? null,
+      in_subregion: subregion ?? null,
+      in_district: district ?? null,
+      in_grid: grid ?? null,
+      in_date_from: range.from,
+      in_date_to: range.to,
+    });
+
+    if (error) {
+      const errAny = error as any;
+      console.error("[Traffic] fetchTrafficTimeseries error in chunk", {
+        from: range.from,
+        to: range.to,
+        // Raw object (may show as {} but useful in devtools)
+        errorRaw: error,
+        // PostgREST usually has these:
+        message: errAny?.message,
+        details: errAny?.details,
+        hint: errAny?.hint,
+        code: errAny?.code,
+      });
+
+      throw new Error(
+        errAny?.message ||
+          errAny?.details ||
+          `fetch_traffic_timeseries failed for chunk ${range.from} to ${range.to}`
+      );
+    }
+
+    if (Array.isArray(data)) {
+      allRows.push(...(data as TrafficTimeseriesRow[]));
+    }
+  }
+
+  // 3) Ensure final data is sorted by date
+  allRows.sort((a, b) => {
+    // dt comes as ISO string from Supabase
+    if (!a.dt || !b.dt) return 0;
+    return a.dt.localeCompare(b.dt);
+  });
+
+  console.log("[Traffic] Timeseries rows (all chunks):", allRows.length);
+  return allRows;
 }
 
 export async function fetchTrafficComparison(
@@ -282,4 +339,42 @@ export async function fetchTrafficDistrictChange(
 
   console.log("[Traffic] District change rows:", data);
   return (data ?? []) as TrafficDistrictChangeRow[];
+}
+/* Small helper: split a date range into smaller chunks to avoid timeouts */
+/* Small helper: split a date range into smaller chunks to avoid timeouts */
+function splitDateRangeIntoChunks(
+  dateFrom: string | null | undefined,
+  dateTo: string | null | undefined,
+  chunkSizeDays = 7 // <= SHRUNK to 7 days to be very safe with 5.1M rows
+): { from: string; to: string }[] {
+  if (!dateFrom || !dateTo) return [];
+
+  const start = new Date(dateFrom);
+  const end = new Date(dateTo);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
+  if (start > end) return [];
+
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  const ranges: { from: string; to: string }[] = [];
+  let cursor = new Date(start);
+
+  while (cursor <= end) {
+    const chunkStart = new Date(cursor);
+    const chunkEnd = new Date(cursor);
+    chunkEnd.setDate(chunkEnd.getDate() + chunkSizeDays - 1);
+
+    if (chunkEnd > end) {
+      chunkEnd.setTime(end.getTime());
+    }
+
+    ranges.push({ from: fmt(chunkStart), to: fmt(chunkEnd) });
+
+    // next day after this chunk
+    cursor = new Date(chunkEnd);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return ranges;
 }
