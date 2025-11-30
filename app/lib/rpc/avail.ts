@@ -11,13 +11,16 @@ export function parseRegion(s: string | null): Region {
     ? v
     : "Nationwide";
 }
+
 export function parseFrequency(s: string | null): Frequency {
   const v = (s ?? "").trim() as Frequency;
   return ["Daily", "Weekly", "Monthly"].includes(v) ? v : "Daily";
 }
+
 const toSqlRegion = (r: Region) => (r === "Nationwide" ? null : r);
 
 /* ── Types used by page.tsx ─────────────────────────────────────────────── */
+
 export type NameValue = { name: string; value: number };
 
 export interface SubregionTargetsRow {
@@ -46,15 +49,25 @@ export interface HitlistRow {
   achieved: boolean;
 }
 
+export interface LockedSiteRow {
+  site_name: string;
+  type: string;
+  start_date: string | null;
+  end_date: string | null;
+  reason: string | null;
+}
+
 export type BundleResult = {
   // Only what page.tsx uses:
   daily: ReadonlyArray<{ date: string; overall?: number }>;
   by_district: ReadonlyArray<NameValue>;
   by_grid: ReadonlyArray<NameValue>;
   cards?: { site_count: number; avg_pgs: number | null; avg_sb: number | null };
+  locked_sites: ReadonlyArray<LockedSiteRow>;
 };
 
-/* ── Date bounds (NEW) ──────────────────────────────────────────────────── */
+/* ── Date bounds ────────────────────────────────────────────────────────── */
+
 export async function fetchCaDateBounds(): Promise<{
   minISO: string | null;
   maxISO: string | null;
@@ -62,8 +75,7 @@ export async function fetchCaDateBounds(): Promise<{
   // Expects SQL function: fetch_ca_date_bounds() → table(min_date date, max_date date)
   const { data, error } = await supabase.rpc("fetch_ca_date_bounds");
   if (error) throw new Error(error.message);
-  // data could be an array of rows or a single row depending on how Supabase returns it for RPC
-  // Handle both shapes safely:
+
   const row =
     Array.isArray(data) && data.length > 0
       ? (data[0] as { min_date?: string | null; max_date?: string | null })
@@ -79,11 +91,13 @@ export async function fetchCaDateBounds(): Promise<{
 }
 
 /* ── RPC wrappers used by page.tsx ──────────────────────────────────────── */
+
 export interface RollupArgs {
   region: Region;
   asOfISO: string; // YYYY-MM-DD
   frequency: Frequency;
 }
+
 export interface HitlistArgs extends RollupArgs {
   classGroup: "PGS" | "SB";
 }
@@ -121,7 +135,7 @@ export async function fetchTargetHitlist(
   return (Array.isArray(data) ? data : []) as HitlistRow[];
 }
 
-/** Bundle JSON for overall line + district/grid bars (+ optional cards) */
+/** Bundle JSON for overall line + district/grid bars (+ optional cards + locked sites) */
 export interface BundleFilters {
   // page passes region + date range; others default to null
   region?: Region;
@@ -137,7 +151,6 @@ export async function fetchCellAvailBundle(
   filters: BundleFilters
 ): Promise<BundleResult> {
   const { data, error } = await supabase.rpc("fetch_cell_avail_bundle", {
-    // NOTE: if your SQL function also expects region, ensure it is added there too.
     in_region: filters.region ? toSqlRegion(filters.region) : null,
     in_subregion: filters.subregion ?? null,
     in_grid: filters.grid ?? null,
@@ -150,6 +163,13 @@ export async function fetchCellAvailBundle(
 
   const obj = (data ?? {}) as Partial<BundleResult> & {
     daily?: Array<{ date?: string; overall?: number }>;
+    locked_sites?: Array<{
+      site_name?: string | null;
+      type?: string | null;
+      start_date?: string | null;
+      end_date?: string | null;
+      reason?: string | null;
+    }>;
   };
 
   return {
@@ -161,5 +181,14 @@ export async function fetchCellAvailBundle(
     by_district: Array.isArray(obj.by_district) ? obj.by_district : [],
     by_grid: Array.isArray(obj.by_grid) ? obj.by_grid : [],
     cards: obj.cards ?? { site_count: 0, avg_pgs: null, avg_sb: null },
+    locked_sites: Array.isArray(obj.locked_sites)
+      ? obj.locked_sites.map((ls) => ({
+          site_name: String(ls.site_name ?? ""),
+          type: String(ls.type ?? ""),
+          start_date: ls.start_date ?? null,
+          end_date: ls.end_date ?? null,
+          reason: ls.reason ?? null,
+        }))
+      : [],
   };
 }

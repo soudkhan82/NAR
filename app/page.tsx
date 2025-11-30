@@ -9,6 +9,13 @@ import { useMemo } from "react";
 // Feel free to swap images with your own assets or CDN
 const TILES = [
   {
+    key: "availability",
+    href: "/Reports",
+    title: "Availability",
+    subtitle: "Site uptime & trends",
+    img: "/images/avail.jpg",
+  },
+  {
     key: "GIS",
     href: "/GIS/",
     title: "Geospatial - Analysis",
@@ -37,13 +44,7 @@ const TILES = [
     subtitle: "Internet service KPIs",
     img: "/images/digital.jpg",
   },
-  {
-    key: "availability",
-    href: "/Availability",
-    title: "Availability",
-    subtitle: "Site uptime & trends",
-    img: "/images/avail.jpg",
-  },
+
   // NEW: ANOps tile
   {
     key: "anops",

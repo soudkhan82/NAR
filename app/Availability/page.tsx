@@ -1,3 +1,4 @@
+// app/Availability/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState, Suspense } from "react";
@@ -14,6 +15,7 @@ import {
   type Frequency,
   type SubregionTargetsRow,
   type HitlistRow,
+  type LockedSiteRow,
 } from "@/app/lib/rpc/avail";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +29,14 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { BarChart3, CalendarDays, Download, Info, Loader2 } from "lucide-react";
+import {
+  BarChart3,
+  CalendarDays,
+  Download,
+  Info,
+  Loader2,
+  ArrowUpDown,
+} from "lucide-react";
 import {
   XAxis,
   YAxis,
@@ -141,6 +150,19 @@ const pctFormatter = (
   return [<span style={{ color: "#60a5fa" }}>{`${num(n)}%`}</span>, name];
 };
 
+/* ---------------- Local types for district/grid rows ---------------- */
+type LevelAggRow = {
+  name?: string | null;
+  overall?: number | null;
+  "2g"?: number | null;
+  "3g"?: number | null;
+  "4g"?: number | null;
+  // in case backend uses slightly different naming
+  v2g?: number | null;
+  v3g?: number | null;
+  v4g?: number | null;
+};
+
 /* ================== Inner page ================== */
 function AvailabilityInner() {
   /* ----- URL filters ----- */
@@ -166,16 +188,21 @@ function AvailabilityInner() {
   const [overallSeries, setOverallSeries] = useState<
     { date: string; overall: number }[]
   >([]);
-  const [districtBars, setDistrictBars] = useState<
-    { name: string; value: number }[]
-  >([]);
-  const [gridBars, setGridBars] = useState<{ name: string; value: number }[]>(
-    []
-  );
+  const [districtBars, setDistrictBars] = useState<LevelAggRow[]>([]);
+  const [gridBars, setGridBars] = useState<LevelAggRow[]>([]);
   const [bounds, setBounds] = useState<{
     minISO: string | null;
     maxISO: string | null;
   }>({ minISO: null, maxISO: null });
+  const [lockedSites, setLockedSites] = useState<ReadonlyArray<LockedSiteRow>>(
+    []
+  );
+
+  /* sorting state for District/Grid tables */
+  const [districtSortDir, setDistrictSortDir] = useState<"asc" | "desc">(
+    "desc"
+  );
+  const [gridSortDir, setGridSortDir] = useState<"asc" | "desc">("desc");
 
   /* ----- load/error state ----- */
   type LoadKey = "bounds" | "kpis" | "trend" | "bars" | "table";
@@ -282,7 +309,7 @@ function AvailabilityInner() {
     };
   }, [region, frequency, toStr]);
 
-  /* ----- trend + district/grid bars ----- */
+  /* ----- trend + district/grid tables + locked sites ----- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -292,13 +319,8 @@ function AvailabilityInner() {
       setErrorKey("bars", null);
       try {
         type DailyRow = Readonly<{ date?: string; overall?: number | null }>;
-        type PairRow = Readonly<{ name?: string; value?: number | null }>;
 
-        const bundle: {
-          daily?: ReadonlyArray<DailyRow>;
-          by_district?: ReadonlyArray<PairRow>;
-          by_grid?: ReadonlyArray<PairRow>;
-        } = await fetchCellAvailBundle({
+        const bundle = await fetchCellAvailBundle({
           region,
           subregion: null,
           grid: null,
@@ -313,33 +335,17 @@ function AvailabilityInner() {
         const daily = [...(bundle.daily ?? [])]
           .filter(
             (d): d is { date: string; overall: number } =>
-              typeof d.date === "string" &&
-              typeof d.overall === "number" &&
-              Number.isFinite(d.overall)
+              typeof (d as DailyRow).date === "string" &&
+              typeof (d as DailyRow).overall === "number" &&
+              Number.isFinite((d as DailyRow).overall as number)
           )
-          .map((d) => ({ date: d.date, overall: d.overall }));
+          .map((d) => ({ date: (d as DailyRow).date!, overall: d.overall! }));
         setOverallSeries(daily);
 
-        const byDist = [...(bundle.by_district ?? [])]
-          .filter(
-            (r): r is { name: string; value: number } =>
-              typeof r.name === "string" &&
-              typeof r.value === "number" &&
-              Number.isFinite(r.value)
-          )
-          .sort((a, b) => b.value - a.value);
-
-        const byGrid = [...(bundle.by_grid ?? [])]
-          .filter(
-            (r): r is { name: string; value: number } =>
-              typeof r.name === "string" &&
-              typeof r.value === "number" &&
-              Number.isFinite(r.value)
-          )
-          .sort((a, b) => b.value - a.value);
-
-        setDistrictBars(byDist);
-        setGridBars(byGrid);
+        // keep full metric rows as-is; sorting happens in useMemo
+        setDistrictBars([...(bundle.by_district ?? [])] as LevelAggRow[]);
+        setGridBars([...(bundle.by_grid ?? [])] as LevelAggRow[]);
+        setLockedSites(bundle.locked_sites ?? []);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Failed to load charts";
         if (!cancelled) {
@@ -348,6 +354,7 @@ function AvailabilityInner() {
           setOverallSeries([]);
           setDistrictBars([]);
           setGridBars([]);
+          setLockedSites([]);
         }
       } finally {
         if (!cancelled) {
@@ -391,6 +398,36 @@ function AvailabilityInner() {
     }, [rows]);
 
   const columnRanges = useMemo<RangeRecord>(() => computeRanges(rows), [rows]);
+
+  /* ----- sorted views for District/Grid tables ----- */
+  const sortedDistrictRows = useMemo(() => {
+    const copy = [...districtBars];
+    copy.sort((a, b) => {
+      const av =
+        (a.overall ?? (a as any).avg_overall_pct ?? (a as any).value ?? 0) || 0;
+      const bv =
+        (b.overall ?? (b as any).avg_overall_pct ?? (b as any).value ?? 0) || 0;
+      return districtSortDir === "asc" ? av - bv : bv - av;
+    });
+    return copy;
+  }, [districtBars, districtSortDir]);
+
+  const sortedGridRows = useMemo(() => {
+    const copy = [...gridBars];
+    copy.sort((a, b) => {
+      const av =
+        (a.overall ?? (a as any).avg_overall_pct ?? (a as any).value ?? 0) || 0;
+      const bv =
+        (b.overall ?? (b as any).avg_overall_pct ?? (b as any).value ?? 0) || 0;
+      return gridSortDir === "asc" ? av - bv : bv - av;
+    });
+    return copy;
+  }, [gridBars, gridSortDir]);
+
+  /* ----- helpers to get 2G/3G/4G values regardless of naming ----- */
+  const get2g = (r: LevelAggRow) => r["2g"] ?? r.v2g ?? null;
+  const get3g = (r: LevelAggRow) => r["3g"] ?? r.v3g ?? null;
+  const get4g = (r: LevelAggRow) => r["4g"] ?? r.v4g ?? null;
 
   /* ----- UI ----- */
   const BlockLoader = ({ label }: { label?: string }) => (
@@ -505,65 +542,170 @@ function AvailabilityInner() {
             ))}
           </div>
 
-          {/* Overall trend */}
-          <Card className="border-slate-800 bg-slate-900/70">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Overall Availability</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {loading.trend ? (
-                <BlockLoader label="Loading trend…" />
-              ) : errors.trend ? (
-                <div className="text-rose-300 text-sm">
-                  Failed to load trend
-                </div>
-              ) : overallSeries.length === 0 ? (
-                <div className="text-slate-300 text-sm py-6">No data</div>
-              ) : (
-                <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={overallSeries} barCategoryGap={8}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                      <XAxis
-                        dataKey="date"
-                        tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                      />
-                      <YAxis
-                        domain={[50, 100]}
-                        tickCount={51}
-                        tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          background: "#0f172a",
-                          border: "1px solid #334155",
-                        }}
-                        labelStyle={{ color: "#ffffff" }}
-                        formatter={(v: ValueType, n: NameType) =>
-                          pctFormatter(v, n)
-                        }
-                      />
-                      <Bar
-                        dataKey="overall"
-                        name="Overall %"
-                        isAnimationActive={false}
-                        barSize={18}
-                        fill="#86efac"
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Overall trend + Locked sites table */}
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+            {/* Overall Availability chart */}
+            <Card className="border-slate-800 bg-slate-900/70 lg:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">
+                  Overall Availability
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-2">
+                {loading.trend ? (
+                  <BlockLoader label="Loading trend…" />
+                ) : errors.trend ? (
+                  <div className="text-rose-300 text-sm">
+                    Failed to load trend
+                  </div>
+                ) : overallSeries.length === 0 ? (
+                  <div className="text-slate-300 text-sm py-6">No data</div>
+                ) : (
+                  <div className="h-[210px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={overallSeries} barCategoryGap={8}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                        />
+                        <YAxis
+                          domain={[50, 100]}
+                          tickCount={51}
+                          tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "#0f172a",
+                            border: "1px solid #334155",
+                          }}
+                          labelStyle={{ color: "#ffffff" }}
+                          formatter={(v: ValueType, n: NameType) =>
+                            pctFormatter(v, n)
+                          }
+                        />
+                        <Bar
+                          dataKey="overall"
+                          name="Overall %"
+                          isAnimationActive={false}
+                          barSize={18}
+                          fill="#86efac"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-          {/* District / Grid */}
+            {/* Locked Sites table */}
+            <Card className="border-slate-800 bg-slate-900/70 lg:col-span-2">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">
+                    Locked Sites (excluded)
+                  </CardTitle>
+                  <span className="text-[11px] text-slate-400">
+                    Total: {lockedSites.length}
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-2">
+                {loading.trend ? (
+                  <BlockLoader label="Loading locked sites…" />
+                ) : errors.trend ? (
+                  <div className="text-rose-300 text-sm">
+                    Failed to load locked sites
+                  </div>
+                ) : lockedSites.length === 0 ? (
+                  <div className="text-slate-300 text-sm py-6">
+                    No locked sites in selected window.
+                  </div>
+                ) : (
+                  <div className="h-[280px] lg:h-[320px] overflow-y-auto pr-2">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-slate-900/90">
+                        <tr>
+                          <th className="text-left py-1 pr-2 font-medium">
+                            Site
+                          </th>
+                          <th className="text-left py-1 pr-2 font-medium">
+                            Type
+                          </th>
+                          <th className="text-left py-1 pr-2 font-medium">
+                            Start
+                          </th>
+                          <th className="text-left py-1 pr-2 font-medium">
+                            End
+                          </th>
+                          <th className="text-left py-1 pr-2 font-medium">
+                            Reason
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lockedSites.map((ls) => (
+                          <tr
+                            key={`${ls.site_name}-${ls.type}-${
+                              ls.start_date ?? ""
+                            }-${ls.end_date ?? ""}`}
+                            className="border-b border-slate-800/60 last:border-b-0"
+                          >
+                            <td className="py-1 pr-2 align-top">
+                              {ls.site_name}
+                            </td>
+                            <td className="py-1 pr-2 align-top">{ls.type}</td>
+                            <td className="py-1 pr-2 align-top tabular-nums">
+                              {ls.start_date ?? "—"}
+                            </td>
+                            <td className="py-1 pr-2 align-top tabular-nums">
+                              {ls.end_date ?? "—"}
+                            </td>
+                            <td
+                              className="py-1 pr-2 align-top max-w-[220px] truncate"
+                              title={ls.reason ?? ""}
+                            >
+                              {ls.reason ?? "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* --- SubRegion table moved ABOVE District/Grid level --- */}
+          <SubregionTable rows={rows} columnRanges={columnRanges} />
+
+          {/* District / Grid tables with sorting on Overall */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* District table */}
             <Card className="border-slate-800 bg-slate-900/70">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">
-                  District · Avg Overall (%)
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">
+                    District · Availability (%)
+                  </CardTitle>
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <span>Sort Overall</span>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() =>
+                        setDistrictSortDir((d) =>
+                          d === "asc" ? "desc" : "asc"
+                        )
+                      }
+                    >
+                      <ArrowUpDown className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="uppercase">{districtSortDir}</span>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="pt-2">
                 {loading.bars ? (
@@ -572,61 +714,76 @@ function AvailabilityInner() {
                   <div className="text-rose-300 text-sm">
                     Failed to load districts
                   </div>
-                ) : districtBars.length === 0 ? (
+                ) : sortedDistrictRows.length === 0 ? (
                   <div className="text-slate-300 text-sm py-6">No data</div>
                 ) : (
                   <div className="h-[340px] overflow-y-auto pr-2">
-                    <div className="h-[600px] min-h-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={districtBars}
-                          layout="vertical"
-                          margin={{ left: 20, top: 4, bottom: 4 }}
-                          barCategoryGap={14}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                          <XAxis
-                            type="number"
-                            domain={[0, 100]}
-                            tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                          />
-                          <YAxis
-                            type="category"
-                            dataKey="name"
-                            tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                            width={130}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: "#0f172a",
-                              border: "1px solid #334155",
-                            }}
-                            labelStyle={{ color: "#ffffff" }}
-                            formatter={(v: ValueType, n: NameType) =>
-                              pctFormatter(v, n)
-                            }
-                          />
-                          <Bar
-                            dataKey="value"
-                            name="Avg %"
-                            isAnimationActive={false}
-                            barSize={18}
-                            fill="#86efac"
-                            activeBar={{ fill: "#000000" }}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-slate-900/90">
+                        <TableRow className="border-slate-800">
+                          <TableHead>District</TableHead>
+                          <TableHead className="text-right">Overall</TableHead>
+                          <TableHead className="text-right">2G</TableHead>
+                          <TableHead className="text-right">3G</TableHead>
+                          <TableHead className="text-right">4G</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedDistrictRows.map((r, idx) => (
+                          <TableRow
+                            key={`${r.name ?? "district"}-${idx}`}
+                            className="border-slate-800"
+                          >
+                            <TableCell className="font-medium">
+                              {r.name ?? "—"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {`${num(
+                                (r.overall ??
+                                  (r as any).avg_overall_pct ??
+                                  (r as any).value) as number
+                              )}%`}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {`${num(get2g(r) as number)}%`}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {`${num(get3g(r) as number)}%`}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {`${num(get4g(r) as number)}%`}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 )}
               </CardContent>
             </Card>
 
+            {/* Grid table */}
             <Card className="border-slate-800 bg-slate-900/70">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">
-                  Grid · Avg Overall (%)
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">
+                    Grid · Availability (%)
+                  </CardTitle>
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <span>Sort Overall</span>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() =>
+                        setGridSortDir((d) => (d === "asc" ? "desc" : "asc"))
+                      }
+                    >
+                      <ArrowUpDown className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="uppercase">{gridSortDir}</span>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="pt-2">
                 {loading.bars ? (
@@ -635,59 +792,54 @@ function AvailabilityInner() {
                   <div className="text-rose-300 text-sm">
                     Failed to load grids
                   </div>
-                ) : gridBars.length === 0 ? (
+                ) : sortedGridRows.length === 0 ? (
                   <div className="text-slate-300 text-sm py-6">No data</div>
                 ) : (
                   <div className="h-[340px] overflow-y-auto pr-2">
-                    <div className="h-[600px] min-h-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={gridBars}
-                          layout="vertical"
-                          margin={{ left: 20, top: 4, bottom: 4 }}
-                          barCategoryGap={14}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                          <XAxis
-                            type="number"
-                            domain={[0, 100]}
-                            tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                          />
-                          <YAxis
-                            type="category"
-                            dataKey="name"
-                            tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                            width={130}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: "#0f172a",
-                              border: "1px solid #334155",
-                            }}
-                            labelStyle={{ color: "#ffffff" }}
-                            formatter={(v: ValueType, n: NameType) =>
-                              pctFormatter(v, n)
-                            }
-                          />
-                          <Bar
-                            dataKey="value"
-                            name="Avg %"
-                            isAnimationActive={false}
-                            barSize={18}
-                            fill="#86efac"
-                            activeBar={{ fill: "#000000" }}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-slate-900/90">
+                        <TableRow className="border-slate-800">
+                          <TableHead>Grid</TableHead>
+                          <TableHead className="text-right">Overall</TableHead>
+                          <TableHead className="text-right">2G</TableHead>
+                          <TableHead className="text-right">3G</TableHead>
+                          <TableHead className="text-right">4G</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedGridRows.map((r, idx) => (
+                          <TableRow
+                            key={`${r.name ?? "grid"}-${idx}`}
+                            className="border-slate-800"
+                          >
+                            <TableCell className="font-medium">
+                              {r.name ?? "—"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {`${num(
+                                (r.overall ??
+                                  (r as any).avg_overall_pct ??
+                                  (r as any).value) as number
+                              )}%`}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {`${num(get2g(r) as number)}%`}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {`${num(get3g(r) as number)}%`}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {`${num(get4g(r) as number)}%`}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 )}
               </CardContent>
             </Card>
           </div>
-
-          {/* Table */}
-          <SubregionTable rows={rows} columnRanges={columnRanges} />
         </div>
       </div>
     </div>
