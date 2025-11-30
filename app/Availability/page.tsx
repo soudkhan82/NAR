@@ -1,6 +1,7 @@
 // app/Availability/page.tsx
 "use client";
 
+import type React from "react";
 import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -161,6 +162,20 @@ type LevelAggRow = {
   v2g?: number | null;
   v3g?: number | null;
   v4g?: number | null;
+};
+
+/* gradient helper for district/grid cells: scale 1-100 */
+const pctCellStyle = (
+  val: number | null | undefined
+): React.CSSProperties | undefined => {
+  if (typeof val !== "number" || !Number.isFinite(val)) return undefined;
+  // clamp to [1,100] as requested
+  const clamped = Math.max(1, Math.min(100, val));
+  const ratio = (clamped - 1) / 99; // 0..1
+  const stop = Math.round(ratio * 100);
+  return {
+    backgroundImage: `linear-gradient(to right, hsla(160, 85%, 45%, 0.32) ${stop}%, transparent 0%)`,
+  };
 };
 
 /* ================== Inner page ================== */
@@ -623,54 +638,56 @@ function AvailabilityInner() {
                   </div>
                 ) : (
                   <div className="h-[280px] lg:h-[320px] overflow-y-auto pr-2">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-slate-900/90">
-                        <tr>
-                          <th className="text-left py-1 pr-2 font-medium">
+                    <Table className="text-xs">
+                      <TableHeader className="sticky top-0 bg-slate-900/90">
+                        <TableRow className="border-slate-800">
+                          <TableHead className="text-left py-1 pr-2">
                             Site
-                          </th>
-                          <th className="text-left py-1 pr-2 font-medium">
+                          </TableHead>
+                          <TableHead className="text-left py-1 pr-2">
                             Type
-                          </th>
-                          <th className="text-left py-1 pr-2 font-medium">
+                          </TableHead>
+                          <TableHead className="text-left py-1 pr-2">
                             Start
-                          </th>
-                          <th className="text-left py-1 pr-2 font-medium">
+                          </TableHead>
+                          <TableHead className="text-left py-1 pr-2">
                             End
-                          </th>
-                          <th className="text-left py-1 pr-2 font-medium">
+                          </TableHead>
+                          <TableHead className="text-left py-1 pr-2">
                             Reason
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lockedSites.map((ls) => (
-                          <tr
-                            key={`${ls.site_name}-${ls.type}-${
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {lockedSites.map((ls, idx) => (
+                          <TableRow
+                            key={`locked-${ls.site_name}-${ls.type}-${
                               ls.start_date ?? ""
-                            }-${ls.end_date ?? ""}`}
-                            className="border-b border-slate-800/60 last:border-b-0"
+                            }-${ls.end_date ?? ""}-${idx}`}
+                            className="border-slate-800"
                           >
-                            <td className="py-1 pr-2 align-top">
+                            <TableCell className="py-1 pr-2 align-top">
                               {ls.site_name}
-                            </td>
-                            <td className="py-1 pr-2 align-top">{ls.type}</td>
-                            <td className="py-1 pr-2 align-top tabular-nums">
+                            </TableCell>
+                            <TableCell className="py-1 pr-2 align-top">
+                              {ls.type}
+                            </TableCell>
+                            <TableCell className="py-1 pr-2 align-top tabular-nums">
                               {ls.start_date ?? "—"}
-                            </td>
-                            <td className="py-1 pr-2 align-top tabular-nums">
+                            </TableCell>
+                            <TableCell className="py-1 pr-2 align-top tabular-nums">
                               {ls.end_date ?? "—"}
-                            </td>
-                            <td
+                            </TableCell>
+                            <TableCell
                               className="py-1 pr-2 align-top max-w-[220px] truncate"
                               title={ls.reason ?? ""}
                             >
                               {ls.reason ?? "—"}
-                            </td>
-                          </tr>
+                            </TableCell>
+                          </TableRow>
                         ))}
-                      </tbody>
-                    </table>
+                      </TableBody>
+                    </Table>
                   </div>
                 )}
               </CardContent>
@@ -680,7 +697,7 @@ function AvailabilityInner() {
           {/* --- SubRegion table moved ABOVE District/Grid level --- */}
           <SubregionTable rows={rows} columnRanges={columnRanges} />
 
-          {/* District / Grid tables with sorting on Overall */}
+          {/* District / Grid tables with sorting on Overall + gradient cells */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* District table */}
             <Card className="border-slate-800 bg-slate-900/70">
@@ -717,7 +734,7 @@ function AvailabilityInner() {
                 ) : sortedDistrictRows.length === 0 ? (
                   <div className="text-slate-300 text-sm py-6">No data</div>
                 ) : (
-                  <div className="h-[340px] overflow-y-auto pr-2">
+                  <div className="h-[360px] overflow-y-auto pr-2">
                     <Table>
                       <TableHeader className="sticky top-0 bg-slate-900/90">
                         <TableRow className="border-slate-800">
@@ -729,32 +746,52 @@ function AvailabilityInner() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {sortedDistrictRows.map((r, idx) => (
-                          <TableRow
-                            key={`${r.name ?? "district"}-${idx}`}
-                            className="border-slate-800"
-                          >
-                            <TableCell className="font-medium">
-                              {r.name ?? "—"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {`${num(
-                                (r.overall ??
-                                  (r as any).avg_overall_pct ??
-                                  (r as any).value) as number
-                              )}%`}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {`${num(get2g(r) as number)}%`}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {`${num(get3g(r) as number)}%`}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {`${num(get4g(r) as number)}%`}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {sortedDistrictRows.map((r, idx) => {
+                          const overallVal =
+                            r.overall ??
+                            (r as any).avg_overall_pct ??
+                            (r as any).value ??
+                            null;
+                          const v2 = get2g(r);
+                          const v3 = get3g(r);
+                          const v4 = get4g(r);
+                          return (
+                            <TableRow
+                              key={`${r.name ?? "district"}-${idx}`}
+                              className="border-slate-800"
+                            >
+                              <TableCell className="font-medium">
+                                {r.name ?? "—"}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={pctCellStyle(
+                                  overallVal as number | null
+                                )}
+                              >
+                                {`${num(overallVal as number)}%`}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={pctCellStyle(v2 as number | null)}
+                              >
+                                {`${num(v2 as number)}%`}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={pctCellStyle(v3 as number | null)}
+                              >
+                                {`${num(v3 as number)}%`}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={pctCellStyle(v4 as number | null)}
+                              >
+                                {`${num(v4 as number)}%`}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
@@ -795,7 +832,7 @@ function AvailabilityInner() {
                 ) : sortedGridRows.length === 0 ? (
                   <div className="text-slate-300 text-sm py-6">No data</div>
                 ) : (
-                  <div className="h-[340px] overflow-y-auto pr-2">
+                  <div className="h-[360px] overflow-y-auto pr-2">
                     <Table>
                       <TableHeader className="sticky top-0 bg-slate-900/90">
                         <TableRow className="border-slate-800">
@@ -807,32 +844,52 @@ function AvailabilityInner() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {sortedGridRows.map((r, idx) => (
-                          <TableRow
-                            key={`${r.name ?? "grid"}-${idx}`}
-                            className="border-slate-800"
-                          >
-                            <TableCell className="font-medium">
-                              {r.name ?? "—"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {`${num(
-                                (r.overall ??
-                                  (r as any).avg_overall_pct ??
-                                  (r as any).value) as number
-                              )}%`}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {`${num(get2g(r) as number)}%`}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {`${num(get3g(r) as number)}%`}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {`${num(get4g(r) as number)}%`}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {sortedGridRows.map((r, idx) => {
+                          const overallVal =
+                            r.overall ??
+                            (r as any).avg_overall_pct ??
+                            (r as any).value ??
+                            null;
+                          const v2 = get2g(r);
+                          const v3 = get3g(r);
+                          const v4 = get4g(r);
+                          return (
+                            <TableRow
+                              key={`${r.name ?? "grid"}-${idx}`}
+                              className="border-slate-800"
+                            >
+                              <TableCell className="font-medium">
+                                {r.name ?? "—"}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={pctCellStyle(
+                                  overallVal as number | null
+                                )}
+                              >
+                                {`${num(overallVal as number)}%`}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={pctCellStyle(v2 as number | null)}
+                              >
+                                {`${num(v2 as number)}%`}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={pctCellStyle(v3 as number | null)}
+                              >
+                                {`${num(v3 as number)}%`}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={pctCellStyle(v4 as number | null)}
+                              >
+                                {`${num(v4 as number)}%`}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
@@ -934,7 +991,7 @@ function SubregionTable({
                     return (
                       <TableCell
                         key={k}
-                        className="text-right relative"
+                        className="text-right relative tabular-nums"
                         style={style}
                       >
                         {isPct ? `${num(val)}%` : num(val, 0)}
