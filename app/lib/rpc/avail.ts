@@ -21,8 +21,6 @@ const toSqlRegion = (r: Region) => (r === "Nationwide" ? null : r);
 
 /* ── Types used by page.tsx ─────────────────────────────────────────────── */
 
-export type NameValue = { name: string; value: number };
-
 export interface SubregionTargetsRow {
   subregion: string;
   region_key: string;
@@ -49,30 +47,28 @@ export interface HitlistRow {
   achieved: boolean;
 }
 
-export interface LockedSiteRow {
-  site_name: string;
-  type: string;
-  start_date: string | null;
-  end_date: string | null;
-  reason: string | null;
-}
+export type BundleDailyRow = { date: string; overall?: number };
+
+export type BundleAggRow = {
+  name: string;
+  overall?: number | null;
+  v2g?: number | null;
+  v3g?: number | null;
+  v4g?: number | null;
+};
 
 export type BundleResult = {
-  // Only what page.tsx uses:
-  daily: ReadonlyArray<{ date: string; overall?: number }>;
-  by_district: ReadonlyArray<NameValue>;
-  by_grid: ReadonlyArray<NameValue>;
+  daily: ReadonlyArray<BundleDailyRow>;
+  by_district: ReadonlyArray<BundleAggRow>;
+  by_grid: ReadonlyArray<BundleAggRow>;
   cards?: { site_count: number; avg_pgs: number | null; avg_sb: number | null };
-  locked_sites: ReadonlyArray<LockedSiteRow>;
 };
 
 /* ── Date bounds ────────────────────────────────────────────────────────── */
-
 export async function fetchCaDateBounds(): Promise<{
   minISO: string | null;
   maxISO: string | null;
 }> {
-  // Expects SQL function: fetch_ca_date_bounds() → table(min_date date, max_date date)
   const { data, error } = await supabase.rpc("fetch_ca_date_bounds");
   if (error) throw new Error(error.message);
 
@@ -91,7 +87,6 @@ export async function fetchCaDateBounds(): Promise<{
 }
 
 /* ── RPC wrappers used by page.tsx ──────────────────────────────────────── */
-
 export interface RollupArgs {
   region: Region;
   asOfISO: string; // YYYY-MM-DD
@@ -135,9 +130,8 @@ export async function fetchTargetHitlist(
   return (Array.isArray(data) ? data : []) as HitlistRow[];
 }
 
-/** Bundle JSON for overall line + district/grid bars (+ optional cards + locked sites) */
+/** Bundle JSON for overall trend + district/grid Overall/2G/3G/4G */
 export interface BundleFilters {
-  // page passes region + date range; others default to null
   region?: Region;
   subregion?: string | null;
   grid?: string | null;
@@ -163,13 +157,6 @@ export async function fetchCellAvailBundle(
 
   const obj = (data ?? {}) as Partial<BundleResult> & {
     daily?: Array<{ date?: string; overall?: number }>;
-    locked_sites?: Array<{
-      site_name?: string | null;
-      type?: string | null;
-      start_date?: string | null;
-      end_date?: string | null;
-      reason?: string | null;
-    }>;
   };
 
   return {
@@ -181,14 +168,6 @@ export async function fetchCellAvailBundle(
     by_district: Array.isArray(obj.by_district) ? obj.by_district : [],
     by_grid: Array.isArray(obj.by_grid) ? obj.by_grid : [],
     cards: obj.cards ?? { site_count: 0, avg_pgs: null, avg_sb: null },
-    locked_sites: Array.isArray(obj.locked_sites)
-      ? obj.locked_sites.map((ls) => ({
-          site_name: String(ls.site_name ?? ""),
-          type: String(ls.type ?? ""),
-          start_date: ls.start_date ?? null,
-          end_date: ls.end_date ?? null,
-          reason: ls.reason ?? null,
-        }))
-      : [],
   };
 }
+  

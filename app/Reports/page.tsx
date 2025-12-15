@@ -441,11 +441,12 @@ export default function HomeDashboardPage() {
                               freq: filters.frequency,
                               asOf: toLocalISO(filters.asOf),
                             });
-                            router.push(`/Complaints?${qs.toString()}`);
+                            router.push(`/complaints/reports?${qs.toString()}`);
                           }}
                         >
                           Open
                         </Button>
+
                         <Button
                           variant="ghost"
                           size="sm"

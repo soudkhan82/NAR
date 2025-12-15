@@ -16,7 +16,6 @@ import {
   type Frequency,
   type SubregionTargetsRow,
   type HitlistRow,
-  type LockedSiteRow,
 } from "@/app/lib/rpc/avail";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +29,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+
 import {
   BarChart3,
   CalendarDays,
@@ -38,6 +38,7 @@ import {
   Loader2,
   ArrowUpDown,
 } from "lucide-react";
+
 import {
   XAxis,
   YAxis,
@@ -47,6 +48,7 @@ import {
   Bar,
   ResponsiveContainer,
 } from "recharts";
+
 import type {
   NameType,
   ValueType,
@@ -58,7 +60,6 @@ const num = (x: number | null | undefined, frac = 2): string =>
     ? x.toLocaleString(undefined, { maximumFractionDigits: frac })
     : "—";
 
-// Simple date helpers, no timezone logic
 const toLocalISO = (d: Date): string => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -67,11 +68,10 @@ const toLocalISO = (d: Date): string => {
 };
 
 const calcWindow = (asOf: Date, freq: Frequency): { from: Date; to: Date } => {
-  const to = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate()); // selected day
+  const to = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
   const from = new Date(to);
-  if (freq === "Weekly")
-    from.setDate(from.getDate() - 7); // last 7 days ending at 'to'
-  else if (freq === "Monthly") from.setDate(from.getDate() - 30); // last 30 days ending at 'to'
+  if (freq === "Weekly") from.setDate(from.getDate() - 7);
+  else if (freq === "Monthly") from.setDate(from.getDate() - 30);
   return { from, to };
 };
 
@@ -151,41 +151,37 @@ const pctFormatter = (
   return [<span style={{ color: "#60a5fa" }}>{`${num(n)}%`}</span>, name];
 };
 
-/* ---------------- Local types for district/grid rows ---------------- */
+/* ---------------- District/Grid row typing ---------------- */
 type LevelAggRow = {
   name?: string | null;
   overall?: number | null;
-  "2g"?: number | null;
-  "3g"?: number | null;
-  "4g"?: number | null;
-  // in case backend uses slightly different naming
   v2g?: number | null;
   v3g?: number | null;
   v4g?: number | null;
+  // fallback keys just in case
+  value?: number | null;
+  avg_overall_pct?: number | null;
 };
 
-/* gradient helper for district/grid cells: scale 1-100 */
+/* ----- gradient for district/grid cells: scale 1..100 ----- */
 const pctCellStyle = (
   val: number | null | undefined
 ): React.CSSProperties | undefined => {
   if (typeof val !== "number" || !Number.isFinite(val)) return undefined;
-  // clamp to [1,100] as requested
   const clamped = Math.max(1, Math.min(100, val));
-  const ratio = (clamped - 1) / 99; // 0..1
+  const ratio = (clamped - 1) / 99;
   const stop = Math.round(ratio * 100);
+
   return {
-    backgroundImage: `linear-gradient(to right, hsla(160, 85%, 45%, 0.32) ${stop}%, transparent 0%)`,
+    backgroundImage: `linear-gradient(90deg, rgba(34,197,94,0.20) ${stop}%, rgba(15,23,42,0) 0%)`,
   };
 };
 
-/* ================== Inner page ================== */
 function AvailabilityInner() {
-  /* ----- URL filters ----- */
   const sp = useSearchParams();
   const region: Region = parseRegion(sp.get("region"));
   const frequency: Frequency = parseFrequency(sp.get("freq"));
 
-  // Selected date from query (YYYY-MM-DD), default = today
   const s = sp.get("asOf");
   const asOf = useMemo(() => (s ? new Date(s) : new Date()), [s]);
 
@@ -196,30 +192,29 @@ function AvailabilityInner() {
   const fromStr = toLocalISO(from);
   const toStr = toLocalISO(to);
 
-  /* ----- data state ----- */
   const [rows, setRows] = useState<SubregionTargetsRow[]>([]);
   const [pgsBelowList, setPgsBelowList] = useState<HitlistRow[]>([]);
   const [sbBelowList, setSbBelowList] = useState<HitlistRow[]>([]);
+
   const [overallSeries, setOverallSeries] = useState<
     { date: string; overall: number }[]
   >([]);
   const [districtBars, setDistrictBars] = useState<LevelAggRow[]>([]);
   const [gridBars, setGridBars] = useState<LevelAggRow[]>([]);
+
   const [bounds, setBounds] = useState<{
     minISO: string | null;
     maxISO: string | null;
-  }>({ minISO: null, maxISO: null });
-  const [lockedSites, setLockedSites] = useState<ReadonlyArray<LockedSiteRow>>(
-    []
-  );
+  }>({
+    minISO: null,
+    maxISO: null,
+  });
 
-  /* sorting state for District/Grid tables */
   const [districtSortDir, setDistrictSortDir] = useState<"asc" | "desc">(
     "desc"
   );
   const [gridSortDir, setGridSortDir] = useState<"asc" | "desc">("desc");
 
-  /* ----- load/error state ----- */
   type LoadKey = "bounds" | "kpis" | "trend" | "bars" | "table";
   const [loading, setLoading] = useState<Record<LoadKey, boolean>>({
     bounds: false,
@@ -235,12 +230,13 @@ function AvailabilityInner() {
     bars: null,
     table: null,
   });
-  const setLoadingKey = (k: LoadKey, v: boolean) =>
-    setLoading((s) => ({ ...s, [k]: v }));
-  const setErrorKey = (k: LoadKey, v: string | null) =>
-    setErrors((s) => ({ ...s, [k]: v }));
 
-  /* ----- date bounds tip (optional) ----- */
+  const setLoadingKey = (k: LoadKey, v: boolean) =>
+    setLoading((st) => ({ ...st, [k]: v }));
+  const setErrorKey = (k: LoadKey, v: string | null) =>
+    setErrors((st) => ({ ...st, [k]: v }));
+
+  /* bounds */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -248,8 +244,8 @@ function AvailabilityInner() {
       setErrorKey("bounds", null);
       try {
         const b = await fetchCaDateBounds();
-        if (cancelled) return;
-        setBounds({ minISO: b?.minISO ?? null, maxISO: b?.maxISO ?? null });
+        if (!cancelled)
+          setBounds({ minISO: b?.minISO ?? null, maxISO: b?.maxISO ?? null });
       } catch (e: unknown) {
         if (!cancelled)
           setErrorKey(
@@ -265,7 +261,7 @@ function AvailabilityInner() {
     };
   }, []);
 
-  /* ----- KPIs + table ----- */
+  /* KPIs + subregion table */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -324,7 +320,7 @@ function AvailabilityInner() {
     };
   }, [region, frequency, toStr]);
 
-  /* ----- trend + district/grid tables + locked sites ----- */
+  /* trend + district/grid */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -355,12 +351,10 @@ function AvailabilityInner() {
               Number.isFinite((d as DailyRow).overall as number)
           )
           .map((d) => ({ date: (d as DailyRow).date!, overall: d.overall! }));
-        setOverallSeries(daily);
 
-        // keep full metric rows as-is; sorting happens in useMemo
+        setOverallSeries(daily);
         setDistrictBars([...(bundle.by_district ?? [])] as LevelAggRow[]);
         setGridBars([...(bundle.by_grid ?? [])] as LevelAggRow[]);
-        setLockedSites(bundle.locked_sites ?? []);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Failed to load charts";
         if (!cancelled) {
@@ -369,7 +363,6 @@ function AvailabilityInner() {
           setOverallSeries([]);
           setDistrictBars([]);
           setGridBars([]);
-          setLockedSites([]);
         }
       } finally {
         if (!cancelled) {
@@ -383,45 +376,42 @@ function AvailabilityInner() {
     };
   }, [region, fromStr, toStr]);
 
-  /* ----- KPIs (aligned with table totals) ----- */
+  /* KPI rollups */
   const { kpiNetAvg, kpiTotalSites, kpiTotalDG, kpiPgsBelow, kpiSbBelow } =
     useMemo(() => {
-      const pgsSites = rows.reduce((s, r) => s + (r.pgs_site_count || 0), 0);
-      const sbSites = rows.reduce((s, r) => s + (r.sb_site_count || 0), 0);
+      const pgsSites = rows.reduce((s2, r) => s2 + (r.pgs_site_count || 0), 0);
+      const sbSites = rows.reduce((s2, r) => s2 + (r.sb_site_count || 0), 0);
       const denom = pgsSites + sbSites || 1;
+
       const weighted =
         (rows.reduce(
-          (s, r) => s + (r.pgs_avg_overall_pct || 0) * (r.pgs_site_count || 0),
+          (s2, r) =>
+            s2 + (r.pgs_avg_overall_pct || 0) * (r.pgs_site_count || 0),
           0
         ) +
           rows.reduce(
-            (s, r) => s + (r.sb_avg_overall_pct || 0) * (r.sb_site_count || 0),
+            (s2, r) =>
+              s2 + (r.sb_avg_overall_pct || 0) * (r.sb_site_count || 0),
             0
           )) /
         denom;
 
-      const pgsBelow = rows.reduce((s, r) => s + (r.pgs_below_count || 0), 0);
-      const sbBelow = rows.reduce((s, r) => s + (r.sb_below_count || 0), 0);
-
       return {
         kpiNetAvg: weighted,
         kpiTotalSites: pgsSites + sbSites,
-        kpiTotalDG: rows.reduce((s, r) => s + (r.dg_site_count || 0), 0),
-        kpiPgsBelow: pgsBelow,
-        kpiSbBelow: sbBelow,
+        kpiTotalDG: rows.reduce((s2, r) => s2 + (r.dg_site_count || 0), 0),
+        kpiPgsBelow: rows.reduce((s2, r) => s2 + (r.pgs_below_count || 0), 0),
+        kpiSbBelow: rows.reduce((s2, r) => s2 + (r.sb_below_count || 0), 0),
       };
     }, [rows]);
 
   const columnRanges = useMemo<RangeRecord>(() => computeRanges(rows), [rows]);
 
-  /* ----- sorted views for District/Grid tables ----- */
   const sortedDistrictRows = useMemo(() => {
     const copy = [...districtBars];
     copy.sort((a, b) => {
-      const av =
-        (a.overall ?? (a as any).avg_overall_pct ?? (a as any).value ?? 0) || 0;
-      const bv =
-        (b.overall ?? (b as any).avg_overall_pct ?? (b as any).value ?? 0) || 0;
+      const av = (a.overall ?? a.avg_overall_pct ?? a.value ?? 0) || 0;
+      const bv = (b.overall ?? b.avg_overall_pct ?? b.value ?? 0) || 0;
       return districtSortDir === "asc" ? av - bv : bv - av;
     });
     return copy;
@@ -430,21 +420,13 @@ function AvailabilityInner() {
   const sortedGridRows = useMemo(() => {
     const copy = [...gridBars];
     copy.sort((a, b) => {
-      const av =
-        (a.overall ?? (a as any).avg_overall_pct ?? (a as any).value ?? 0) || 0;
-      const bv =
-        (b.overall ?? (b as any).avg_overall_pct ?? (b as any).value ?? 0) || 0;
+      const av = (a.overall ?? a.avg_overall_pct ?? a.value ?? 0) || 0;
+      const bv = (b.overall ?? b.avg_overall_pct ?? b.value ?? 0) || 0;
       return gridSortDir === "asc" ? av - bv : bv - av;
     });
     return copy;
   }, [gridBars, gridSortDir]);
 
-  /* ----- helpers to get 2G/3G/4G values regardless of naming ----- */
-  const get2g = (r: LevelAggRow) => r["2g"] ?? r.v2g ?? null;
-  const get3g = (r: LevelAggRow) => r["3g"] ?? r.v3g ?? null;
-  const get4g = (r: LevelAggRow) => r["4g"] ?? r.v4g ?? null;
-
-  /* ----- UI ----- */
   const BlockLoader = ({ label }: { label?: string }) => (
     <div className="flex items-center justify-center py-8 text-slate-300">
       <Loader2 className="h-5 w-5 mr-2 animate-spin" />
@@ -456,7 +438,7 @@ function AvailabilityInner() {
     <div className="dark">
       <div className="min-h-screen bg-slate-950 text-slate-100">
         <div className="mx-auto max-w-7xl px-3 sm:px-4 py-6 space-y-4">
-          {/* Tip: date bounds */}
+          {/* Date bounds strip */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-2 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="h-8 w-8 rounded-lg bg-slate-800 flex items-center justify-center">
@@ -557,345 +539,87 @@ function AvailabilityInner() {
             ))}
           </div>
 
-          {/* Overall trend + Locked sites table */}
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
-            {/* Overall Availability chart */}
-            <Card className="border-slate-800 bg-slate-900/70 lg:col-span-2">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">
-                  Overall Availability
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-2">
-                {loading.trend ? (
-                  <BlockLoader label="Loading trend…" />
-                ) : errors.trend ? (
-                  <div className="text-rose-300 text-sm">
-                    Failed to load trend
-                  </div>
-                ) : overallSeries.length === 0 ? (
-                  <div className="text-slate-300 text-sm py-6">No data</div>
-                ) : (
-                  <div className="h-[210px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={overallSeries} barCategoryGap={8}>
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                        <XAxis
-                          dataKey="date"
-                          tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                        />
-                        <YAxis
-                          domain={[50, 100]}
-                          tickCount={51}
-                          tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            background: "#0f172a",
-                            border: "1px solid #334155",
-                          }}
-                          labelStyle={{ color: "#ffffff" }}
-                          formatter={(v: ValueType, n: NameType) =>
-                            pctFormatter(v, n)
-                          }
-                        />
-                        <Bar
-                          dataKey="overall"
-                          name="Overall %"
-                          isAnimationActive={false}
-                          barSize={18}
-                          fill="#86efac"
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+          {/* ✅ SubRegion table BELOW cards (as you asked) */}
+          <SubregionTable
+            rows={rows}
+            columnRanges={columnRanges}
+            loading={loading.table}
+            error={errors.table}
+          />
 
-            {/* Locked Sites table */}
-            <Card className="border-slate-800 bg-slate-900/70 lg:col-span-2">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm">
-                    Locked Sites (excluded)
-                  </CardTitle>
-                  <span className="text-[11px] text-slate-400">
-                    Total: {lockedSites.length}
-                  </span>
+          {/* Overall chart BELOW SubRegion table */}
+          <Card className="border-slate-800 bg-slate-900/70">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Overall Availability</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-2">
+              {loading.trend ? (
+                <BlockLoader label="Loading trend…" />
+              ) : errors.trend ? (
+                <div className="text-rose-300 text-sm">
+                  Failed to load trend
                 </div>
-              </CardHeader>
-              <CardContent className="pt-2">
-                {loading.trend ? (
-                  <BlockLoader label="Loading locked sites…" />
-                ) : errors.trend ? (
-                  <div className="text-rose-300 text-sm">
-                    Failed to load locked sites
-                  </div>
-                ) : lockedSites.length === 0 ? (
-                  <div className="text-slate-300 text-sm py-6">
-                    No locked sites in selected window.
-                  </div>
-                ) : (
-                  <div className="h-[280px] lg:h-[320px] overflow-y-auto pr-2">
-                    <Table className="text-xs">
-                      <TableHeader className="sticky top-0 bg-slate-900/90">
-                        <TableRow className="border-slate-800">
-                          <TableHead className="text-left py-1 pr-2">
-                            Site
-                          </TableHead>
-                          <TableHead className="text-left py-1 pr-2">
-                            Type
-                          </TableHead>
-                          <TableHead className="text-left py-1 pr-2">
-                            Start
-                          </TableHead>
-                          <TableHead className="text-left py-1 pr-2">
-                            End
-                          </TableHead>
-                          <TableHead className="text-left py-1 pr-2">
-                            Reason
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {lockedSites.map((ls, idx) => (
-                          <TableRow
-                            key={`locked-${ls.site_name}-${ls.type}-${
-                              ls.start_date ?? ""
-                            }-${ls.end_date ?? ""}-${idx}`}
-                            className="border-slate-800"
-                          >
-                            <TableCell className="py-1 pr-2 align-top">
-                              {ls.site_name}
-                            </TableCell>
-                            <TableCell className="py-1 pr-2 align-top">
-                              {ls.type}
-                            </TableCell>
-                            <TableCell className="py-1 pr-2 align-top tabular-nums">
-                              {ls.start_date ?? "—"}
-                            </TableCell>
-                            <TableCell className="py-1 pr-2 align-top tabular-nums">
-                              {ls.end_date ?? "—"}
-                            </TableCell>
-                            <TableCell
-                              className="py-1 pr-2 align-top max-w-[220px] truncate"
-                              title={ls.reason ?? ""}
-                            >
-                              {ls.reason ?? "—"}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+              ) : overallSeries.length === 0 ? (
+                <div className="text-slate-300 text-sm py-6">No data</div>
+              ) : (
+                <div className="h-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={overallSeries} barCategoryGap={8}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                      />
+                      <YAxis
+                        domain={[50, 100]}
+                        tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#0f172a",
+                          border: "1px solid #334155",
+                        }}
+                        labelStyle={{ color: "#ffffff" }}
+                        formatter={(v: ValueType, n: NameType) =>
+                          pctFormatter(v, n)
+                        }
+                      />
+                      <Bar
+                        dataKey="overall"
+                        name="Overall %"
+                        isAnimationActive={false}
+                        barSize={18}
+                        fill="#86efac"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-          {/* --- SubRegion table moved ABOVE District/Grid level --- */}
-          <SubregionTable rows={rows} columnRanges={columnRanges} />
-
-          {/* District / Grid tables with sorting on Overall + gradient cells */}
+          {/* District / Grid tables */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* District table */}
-            <Card className="border-slate-800 bg-slate-900/70">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm">
-                    District · Availability (%)
-                  </CardTitle>
-                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                    <span>Sort Overall</span>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() =>
-                        setDistrictSortDir((d) =>
-                          d === "asc" ? "desc" : "asc"
-                        )
-                      }
-                    >
-                      <ArrowUpDown className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="uppercase">{districtSortDir}</span>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-2">
-                {loading.bars ? (
-                  <BlockLoader label="Loading districts…" />
-                ) : errors.bars ? (
-                  <div className="text-rose-300 text-sm">
-                    Failed to load districts
-                  </div>
-                ) : sortedDistrictRows.length === 0 ? (
-                  <div className="text-slate-300 text-sm py-6">No data</div>
-                ) : (
-                  <div className="h-[360px] overflow-y-auto pr-2">
-                    <Table>
-                      <TableHeader className="sticky top-0 bg-slate-900/90">
-                        <TableRow className="border-slate-800">
-                          <TableHead>District</TableHead>
-                          <TableHead className="text-right">Overall</TableHead>
-                          <TableHead className="text-right">2G</TableHead>
-                          <TableHead className="text-right">3G</TableHead>
-                          <TableHead className="text-right">4G</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sortedDistrictRows.map((r, idx) => {
-                          const overallVal =
-                            r.overall ??
-                            (r as any).avg_overall_pct ??
-                            (r as any).value ??
-                            null;
-                          const v2 = get2g(r);
-                          const v3 = get3g(r);
-                          const v4 = get4g(r);
-                          return (
-                            <TableRow
-                              key={`${r.name ?? "district"}-${idx}`}
-                              className="border-slate-800"
-                            >
-                              <TableCell className="font-medium">
-                                {r.name ?? "—"}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={pctCellStyle(
-                                  overallVal as number | null
-                                )}
-                              >
-                                {`${num(overallVal as number)}%`}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={pctCellStyle(v2 as number | null)}
-                              >
-                                {`${num(v2 as number)}%`}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={pctCellStyle(v3 as number | null)}
-                              >
-                                {`${num(v3 as number)}%`}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={pctCellStyle(v4 as number | null)}
-                              >
-                                {`${num(v4 as number)}%`}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Grid table */}
-            <Card className="border-slate-800 bg-slate-900/70">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm">
-                    Grid · Availability (%)
-                  </CardTitle>
-                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                    <span>Sort Overall</span>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() =>
-                        setGridSortDir((d) => (d === "asc" ? "desc" : "asc"))
-                      }
-                    >
-                      <ArrowUpDown className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="uppercase">{gridSortDir}</span>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-2">
-                {loading.bars ? (
-                  <BlockLoader label="Loading grids…" />
-                ) : errors.bars ? (
-                  <div className="text-rose-300 text-sm">
-                    Failed to load grids
-                  </div>
-                ) : sortedGridRows.length === 0 ? (
-                  <div className="text-slate-300 text-sm py-6">No data</div>
-                ) : (
-                  <div className="h-[360px] overflow-y-auto pr-2">
-                    <Table>
-                      <TableHeader className="sticky top-0 bg-slate-900/90">
-                        <TableRow className="border-slate-800">
-                          <TableHead>Grid</TableHead>
-                          <TableHead className="text-right">Overall</TableHead>
-                          <TableHead className="text-right">2G</TableHead>
-                          <TableHead className="text-right">3G</TableHead>
-                          <TableHead className="text-right">4G</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sortedGridRows.map((r, idx) => {
-                          const overallVal =
-                            r.overall ??
-                            (r as any).avg_overall_pct ??
-                            (r as any).value ??
-                            null;
-                          const v2 = get2g(r);
-                          const v3 = get3g(r);
-                          const v4 = get4g(r);
-                          return (
-                            <TableRow
-                              key={`${r.name ?? "grid"}-${idx}`}
-                              className="border-slate-800"
-                            >
-                              <TableCell className="font-medium">
-                                {r.name ?? "—"}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={pctCellStyle(
-                                  overallVal as number | null
-                                )}
-                              >
-                                {`${num(overallVal as number)}%`}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={pctCellStyle(v2 as number | null)}
-                              >
-                                {`${num(v2 as number)}%`}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={pctCellStyle(v3 as number | null)}
-                              >
-                                {`${num(v3 as number)}%`}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={pctCellStyle(v4 as number | null)}
-                              >
-                                {`${num(v4 as number)}%`}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <MetricTable
+              title="District · Availability (%)"
+              rows={sortedDistrictRows}
+              loading={loading.bars}
+              error={errors.bars}
+              sortDir={districtSortDir}
+              onToggleSort={() =>
+                setDistrictSortDir((d) => (d === "asc" ? "desc" : "asc"))
+              }
+            />
+            <MetricTable
+              title="Grid · Availability (%)"
+              rows={sortedGridRows}
+              loading={loading.bars}
+              error={errors.bars}
+              sortDir={gridSortDir}
+              onToggleSort={() =>
+                setGridSortDir((d) => (d === "asc" ? "desc" : "asc"))
+              }
+            />
           </div>
         </div>
       </div>
@@ -903,13 +627,142 @@ function AvailabilityInner() {
   );
 }
 
-/* ---------------- Table (split out just for clarity) ---------------- */
+/* ---------------- Reusable Metric Table ---------------- */
+function MetricTable({
+  title,
+  rows,
+  loading,
+  error,
+  sortDir,
+  onToggleSort,
+}: {
+  title: string;
+  rows: LevelAggRow[];
+  loading: boolean;
+  error: string | null;
+  sortDir: "asc" | "desc";
+  onToggleSort: () => void;
+}) {
+  // height tuned for ~10 rows view (depends on font/row padding)
+  const bodyHeight = "h-[360px]";
+
+  const getOverall = (r: LevelAggRow) =>
+    (r.overall ?? r.avg_overall_pct ?? r.value ?? null) as number | null;
+
+  return (
+    <Card className="border-slate-800 bg-slate-900/70 overflow-hidden">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm">{title}</CardTitle>
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <span>Sort Overall</span>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={onToggleSort}
+            >
+              <ArrowUpDown className="h-3.5 w-3.5" />
+            </Button>
+            <span className="uppercase">{sortDir}</span>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="pt-2">
+        {loading ? (
+          <div className="py-10 flex items-center justify-center text-slate-300">
+            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+            <span className="text-sm">Loading…</span>
+          </div>
+        ) : error ? (
+          <div className="text-rose-300 text-sm">Failed to load</div>
+        ) : rows.length === 0 ? (
+          <div className="text-slate-300 text-sm py-6">No data</div>
+        ) : (
+          <div
+            className={`${bodyHeight} overflow-y-auto pr-2 rounded-xl border border-slate-800`}
+            style={{
+              background:
+                "linear-gradient(180deg, rgba(30,41,59,0.55), rgba(2,6,23,0.25))",
+            }}
+          >
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-slate-950/80 backdrop-blur border-b border-slate-800">
+                <TableRow className="border-slate-800">
+                  <TableHead>
+                    {title.startsWith("District") ? "District" : "Grid"}
+                  </TableHead>
+                  <TableHead className="text-right">Overall</TableHead>
+                  <TableHead className="text-right">2G</TableHead>
+                  <TableHead className="text-right">3G</TableHead>
+                  <TableHead className="text-right">4G</TableHead>
+                </TableRow>
+              </TableHeader>
+
+              <TableBody>
+                {rows.map((r, idx) => {
+                  const ov = getOverall(r);
+                  const v2 = r.v2g ?? null;
+                  const v3 = r.v3g ?? null;
+                  const v4 = r.v4g ?? null;
+
+                  return (
+                    <TableRow
+                      key={`${r.name ?? "row"}-${idx}`}
+                      className="border-slate-800/70"
+                    >
+                      <TableCell className="font-medium">
+                        {r.name ?? "—"}
+                      </TableCell>
+
+                      <TableCell
+                        className="text-right tabular-nums"
+                        style={pctCellStyle(ov)}
+                      >
+                        {`${num(ov)}%`}
+                      </TableCell>
+                      <TableCell
+                        className="text-right tabular-nums"
+                        style={pctCellStyle(v2)}
+                      >
+                        {`${num(v2)}%`}
+                      </TableCell>
+                      <TableCell
+                        className="text-right tabular-nums"
+                        style={pctCellStyle(v3)}
+                      >
+                        {`${num(v3)}%`}
+                      </TableCell>
+                      <TableCell
+                        className="text-right tabular-nums"
+                        style={pctCellStyle(v4)}
+                      >
+                        {`${num(v4)}%`}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---------------- SubRegion Table ---------------- */
 function SubregionTable({
   rows,
   columnRanges,
+  loading,
+  error,
 }: {
   rows: SubregionTargetsRow[];
   columnRanges: Record<keyof SubregionTargetsRow & KeyNum, Range>;
+  loading: boolean;
+  error: string | null;
 }) {
   return (
     <Card className="border-slate-800 bg-slate-900/70">
@@ -921,88 +774,109 @@ function SubregionTable({
           </div>
         </div>
       </CardHeader>
+
       <CardContent className="pt-2">
-        <div className="rounded-lg border border-slate-800 overflow-x-auto">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-slate-900/90">
-              <TableRow className="border-slate-800">
-                <TableHead className="w-[180px]">SubRegion</TableHead>
-                <TableHead className="w-[110px]">Region</TableHead>
-                {ALL_KEYS.map((k) => (
-                  <TableHead key={k} className="text-right">
-                    {
+        {loading ? (
+          <div className="py-10 flex items-center justify-center text-slate-300">
+            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+            <span className="text-sm">Loading SubRegions…</span>
+          </div>
+        ) : error ? (
+          <div className="text-rose-300 text-sm">Failed to load table</div>
+        ) : rows.length === 0 ? (
+          <div className="text-slate-300 text-sm py-6">No data</div>
+        ) : (
+          <div className="rounded-lg border border-slate-800 overflow-x-auto">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-slate-950/80 backdrop-blur">
+                <TableRow className="border-slate-800">
+                  <TableHead className="w-[180px]">SubRegion</TableHead>
+                  <TableHead className="w-[110px]">Region</TableHead>
+                  {ALL_KEYS.map((k) => (
+                    <TableHead key={k} className="text-right">
                       {
-                        pgs_target_pct: "PGS Target %",
-                        sb_target_pct: "SB Target %",
-                        pgs_site_count: "PGS Sites",
-                        sb_site_count: "SB Sites",
-                        dg_site_count: "DG Sites",
-                        pgs_avg_overall_pct: "PGS Avg %",
-                        sb_avg_overall_pct: "SB Avg %",
-                        dg_avg_overall_pct: "DG Avg %",
-                        pgs_achieved_count: "PGS Achieved",
-                        pgs_below_count: "PGS Below",
-                        sb_achieved_count: "SB Achieved",
-                        sb_below_count: "SB Below",
-                      }[k]
-                    }
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.subregion} className="border-slate-800">
-                  <TableCell className="font-medium">{r.subregion}</TableCell>
-                  <TableCell>{r.region_key}</TableCell>
-                  {ALL_KEYS.map((k) => {
-                    const { min, max } = columnRanges[k];
-                    const val = r[k] as unknown as number | null | undefined;
-                    const isPct =
-                      k === "pgs_target_pct" ||
-                      k === "sb_target_pct" ||
-                      k === "pgs_avg_overall_pct" ||
-                      k === "sb_avg_overall_pct" ||
-                      k === "dg_avg_overall_pct";
-                    const alpha =
-                      k === "pgs_target_pct" || k === "sb_target_pct"
-                        ? 0
-                        : 0.32;
-                    const style =
-                      alpha === 0
-                        ? undefined
-                        : ({
-                            backgroundImage: `linear-gradient(to right, hsla(${
-                              isPct ? 160 : 220
-                            }, 85%, 45%, ${alpha}) ${Math.round(
-                              Math.max(
-                                0,
-                                Math.min(
-                                  1,
-                                  typeof val === "number" &&
-                                    Number.isFinite(val) &&
-                                    max > min
-                                    ? (val - min) / (max - min)
-                                    : 0
-                                )
-                              ) * 100
-                            )}%, transparent 0%)`,
-                          } as React.CSSProperties);
-                    return (
-                      <TableCell
-                        key={k}
-                        className="text-right relative tabular-nums"
-                        style={style}
-                      >
-                        {isPct ? `${num(val)}%` : num(val, 0)}
-                      </TableCell>
-                    );
-                  })}
+                        {
+                          pgs_target_pct: "PGS Target %",
+                          sb_target_pct: "SB Target %",
+                          pgs_site_count: "PGS Sites",
+                          sb_site_count: "SB Sites",
+                          dg_site_count: "DG Sites",
+                          pgs_avg_overall_pct: "PGS Avg %",
+                          sb_avg_overall_pct: "SB Avg %",
+                          dg_avg_overall_pct: "DG Avg %",
+                          pgs_achieved_count: "PGS Achieved",
+                          pgs_below_count: "PGS Below",
+                          sb_achieved_count: "SB Achieved",
+                          sb_below_count: "SB Below",
+                        }[k]
+                      }
+                    </TableHead>
+                  ))}
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+
+              <TableBody>
+                {rows.map((r, idx) => (
+                  <TableRow
+                    key={`${r.subregion}-${r.region_key}-${idx}`}
+                    className="border-slate-800/70"
+                  >
+                    <TableCell className="font-medium">{r.subregion}</TableCell>
+                    <TableCell>{r.region_key}</TableCell>
+
+                    {ALL_KEYS.map((k) => {
+                      const { min, max } = columnRanges[k];
+                      const val = r[k] as unknown as number | null | undefined;
+
+                      const isPct =
+                        k === "pgs_target_pct" ||
+                        k === "sb_target_pct" ||
+                        k === "pgs_avg_overall_pct" ||
+                        k === "sb_avg_overall_pct" ||
+                        k === "dg_avg_overall_pct";
+
+                      const alpha =
+                        k === "pgs_target_pct" || k === "sb_target_pct"
+                          ? 0
+                          : 0.32;
+
+                      const style =
+                        alpha === 0
+                          ? undefined
+                          : ({
+                              backgroundImage: `linear-gradient(to right, hsla(${
+                                isPct ? 160 : 220
+                              }, 85%, 45%, ${alpha}) ${Math.round(
+                                Math.max(
+                                  0,
+                                  Math.min(
+                                    1,
+                                    typeof val === "number" &&
+                                      Number.isFinite(val) &&
+                                      max > min
+                                      ? (val - min) / (max - min)
+                                      : 0
+                                  )
+                                ) * 100
+                              )}%, transparent 0%)`,
+                            } as React.CSSProperties);
+
+                      return (
+                        <TableCell
+                          key={k}
+                          className="text-right tabular-nums"
+                          style={style}
+                        >
+                          {isPct ? `${num(val)}%` : num(val, 0)}
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1041,6 +915,7 @@ function buildClassCsv(cls: "PGS" | "SB", rows: HitlistRow[]): string {
   });
   return [header, ...lines].join("\n");
 }
+
 function downloadCsvFor(
   cls: "PGS" | "SB",
   rows: HitlistRow[],
@@ -1058,7 +933,7 @@ function downloadCsvFor(
   URL.revokeObjectURL(url);
 }
 
-/* ================== Default export with Suspense wrapper ================== */
+/* ---------------- Default export with Suspense wrapper ---------------- */
 export default function AvailabilityPage() {
   return (
     <Suspense
