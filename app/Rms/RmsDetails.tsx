@@ -11,16 +11,23 @@ type SiteRow = {
   siteclassification: string | null;
 };
 
-function hrefFor(siteName: string) {
+function siteQueryHref(siteName: string) {
   return `/sitequery/${encodeURIComponent(siteName)}`;
+}
+
+// RMS Query page path as per your requirement: app/Rms/[id]/page.tsx  => /Rms/<id>
+function rmsQueryHref(siteName: string) {
+  return `/Rms/${encodeURIComponent(siteName)}`;
 }
 
 function CellLink({
   href,
   children,
+  title,
 }: {
   href: string;
   children: React.ReactNode;
+  title?: string;
 }) {
   return (
     <Link
@@ -28,7 +35,29 @@ function CellLink({
       target="_blank"
       rel="noopener noreferrer"
       className="block px-3 py-2 w-full h-full hover:opacity-90"
-      title="Open SiteQuery in new tab"
+      title={title ?? "Open in new tab"}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function PillLink({
+  href,
+  children,
+  title,
+}: {
+  href: string;
+  children: React.ReactNode;
+  title?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center justify-center rounded-md border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/15"
+      title={title ?? "Open in new tab"}
     >
       {children}
     </Link>
@@ -82,7 +111,9 @@ export default async function RmsDetailsView({
                 </span>
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                Tap any row to open SiteQuery.
+                Use{" "}
+                <span className="text-slate-200 font-medium">RMS Query</span> to
+                open full RMS indicators. Click SiteName to open SiteQuery.
               </p>
             </div>
 
@@ -97,9 +128,10 @@ export default async function RmsDetailsView({
 
         <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur">
           <div className="max-h-[720px] overflow-auto rounded-2xl">
-            <table className="min-w-[900px] w-full text-sm text-slate-100">
+            <table className="min-w-[1050px] w-full text-sm text-slate-100">
               <thead className="sticky top-0 z-10 bg-slate-900/90 backdrop-blur">
                 <tr>
+                  <th className="px-3 py-3 text-left">RMS Query</th>
                   <th className="px-3 py-3 text-left">SiteName</th>
                   <th className="px-3 py-3 text-left">Region</th>
                   <th className="px-3 py-3 text-left">SubRegion</th>
@@ -112,61 +144,103 @@ export default async function RmsDetailsView({
               <tbody>
                 {rows.map((r, i) => {
                   const site = r.sitename?.trim();
-                  const link = site ? hrefFor(site) : null;
+                  const siteHref = site ? siteQueryHref(site) : null;
+                  const rmsHref = site ? rmsQueryHref(site) : null;
 
                   return (
                     <tr
                       key={`${r.sitename ?? "NA"}-${i}`}
                       className={`border-t border-white/10 ${
                         i % 2 === 0 ? "bg-white/0" : "bg-white/5"
-                      } hover:bg-white/10 transition ${
-                        link ? "cursor-pointer" : ""
-                      }`}
+                      } hover:bg-white/10 transition`}
                     >
-                      {/* Make each cell clickable by wrapping content with Link */}
+                      {/* RMS Query button */}
+                      <td className="px-3 py-2">
+                        {rmsHref ? (
+                          <PillLink
+                            href={rmsHref}
+                            title="Open RMS indicators in new tab"
+                          >
+                            RMS Query
+                          </PillLink>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+
+                      {/* SiteName opens SiteQuery in new tab */}
                       <td className="p-0 font-medium">
-                        {link ? (
-                          <CellLink href={link}>{site}</CellLink>
+                        {siteHref ? (
+                          <CellLink
+                            href={siteHref}
+                            title="Open SiteQuery in new tab"
+                          >
+                            {site}
+                          </CellLink>
                         ) : (
                           <div className="px-3 py-2">-</div>
                         )}
                       </td>
 
+                      {/* Other columns (also open SiteQuery for convenience) */}
                       <td className="p-0">
-                        {link ? (
-                          <CellLink href={link}>{r.region ?? "-"}</CellLink>
+                        {siteHref ? (
+                          <CellLink
+                            href={siteHref}
+                            title="Open SiteQuery in new tab"
+                          >
+                            {r.region ?? "-"}
+                          </CellLink>
                         ) : (
                           <div className="px-3 py-2">{r.region ?? "-"}</div>
                         )}
                       </td>
 
                       <td className="p-0">
-                        {link ? (
-                          <CellLink href={link}>{r.subregion ?? "-"}</CellLink>
+                        {siteHref ? (
+                          <CellLink
+                            href={siteHref}
+                            title="Open SiteQuery in new tab"
+                          >
+                            {r.subregion ?? "-"}
+                          </CellLink>
                         ) : (
                           <div className="px-3 py-2">{r.subregion ?? "-"}</div>
                         )}
                       </td>
 
                       <td className="p-0">
-                        {link ? (
-                          <CellLink href={link}>{r.grid ?? "-"}</CellLink>
+                        {siteHref ? (
+                          <CellLink
+                            href={siteHref}
+                            title="Open SiteQuery in new tab"
+                          >
+                            {r.grid ?? "-"}
+                          </CellLink>
                         ) : (
                           <div className="px-3 py-2">{r.grid ?? "-"}</div>
                         )}
                       </td>
 
                       <td className="p-0">
-                        {link ? (
-                          <CellLink href={link}>{r.district ?? "-"}</CellLink>
+                        {siteHref ? (
+                          <CellLink
+                            href={siteHref}
+                            title="Open SiteQuery in new tab"
+                          >
+                            {r.district ?? "-"}
+                          </CellLink>
                         ) : (
                           <div className="px-3 py-2">{r.district ?? "-"}</div>
                         )}
                       </td>
 
                       <td className="p-0">
-                        {link ? (
-                          <CellLink href={link}>
+                        {siteHref ? (
+                          <CellLink
+                            href={siteHref}
+                            title="Open SiteQuery in new tab"
+                          >
                             {r.siteclassification ?? "-"}
                           </CellLink>
                         ) : (
@@ -183,7 +257,7 @@ export default async function RmsDetailsView({
                   <tr>
                     <td
                       className="px-3 py-6 text-center text-slate-300"
-                      colSpan={6}
+                      colSpan={7}
                     >
                       No sites found for this indicator in this SubRegion.
                     </td>
@@ -194,8 +268,10 @@ export default async function RmsDetailsView({
           </div>
 
           <div className="px-4 py-3 text-xs text-slate-300 border-t border-white/10">
-            Row tap opens:{" "}
-            <span className="text-slate-200">/sitequery/[id]</span>
+            <span className="text-slate-200">RMS Query</span> opens{" "}
+            <span className="text-slate-200">/Rms/[id]</span> in new tab •
+            SiteName opens{" "}
+            <span className="text-slate-200">/sitequery/[id]</span> in new tab
           </div>
         </div>
       </div>
