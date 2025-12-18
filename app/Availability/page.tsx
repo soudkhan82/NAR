@@ -55,9 +55,13 @@ import type {
 } from "recharts/types/component/DefaultTooltipContent";
 
 /* ---------------- tiny utils ---------------- */
-const num = (x: number | null | undefined, frac = 2): string =>
+// UI display precision = 4 decimals, no scaling, no rounding in SQL
+const num = (x: number | null | undefined, frac = 4): string =>
   typeof x === "number" && Number.isFinite(x)
-    ? x.toLocaleString(undefined, { maximumFractionDigits: frac })
+    ? x.toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: frac,
+      })
     : "—";
 
 const toLocalISO = (d: Date): string => {
@@ -76,20 +80,19 @@ const calcWindow = (asOf: Date, freq: Frequency): { from: Date; to: Date } => {
 };
 
 const belowFilter = (r: HitlistRow): boolean =>
-  typeof r?.avg_overall_pct === "number" &&
-  typeof r?.target_pct === "number" &&
+  typeof r.avg_overall_pct === "number" &&
+  typeof r.target_pct === "number" &&
   r.avg_overall_pct < r.target_pct;
 
 const dedupeBySite = (rows: HitlistRow[]): HitlistRow[] => {
   const m = new Map<string, HitlistRow>();
-  rows.forEach((r) => {
+  rows.forEach((r: HitlistRow) => {
     const k = `${r.site_name}|${r.subregion ?? ""}`;
     if (!m.has(k)) m.set(k, r);
   });
   return [...m.values()];
 };
 
-/* ---------------- column/heat typings ---------------- */
 type KeyNum =
   | "pgs_target_pct"
   | "sb_target_pct"
@@ -125,15 +128,17 @@ const ALL_KEYS: KeyNum[] = [
 function computeRanges(rows: SubregionTargetsRow[]): RangeRecord {
   const out = {} as RangeRecord;
   for (const key of ALL_KEYS) {
-    let min = Number.POSITIVE_INFINITY,
-      max = Number.NEGATIVE_INFINITY;
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+
     for (const r of rows) {
-      const v = r[key] as unknown as number | null | undefined;
+      const v = r[key];
       if (typeof v === "number" && Number.isFinite(v)) {
         if (v < min) min = v;
         if (v > max) max = v;
       }
     }
+
     out[key] = {
       min: min === Number.POSITIVE_INFINITY ? 0 : min,
       max: max === Number.NEGATIVE_INFINITY ? 0 : max,
@@ -142,7 +147,6 @@ function computeRanges(rows: SubregionTargetsRow[]): RangeRecord {
   return out;
 }
 
-/* ---------------- tooltip formatter ---------------- */
 const pctFormatter = (
   value: ValueType,
   name: NameType
@@ -151,19 +155,16 @@ const pctFormatter = (
   return [<span style={{ color: "#60a5fa" }}>{`${num(n)}%`}</span>, name];
 };
 
-/* ---------------- District/Grid row typing ---------------- */
 type LevelAggRow = {
   name?: string | null;
   overall?: number | null;
   v2g?: number | null;
   v3g?: number | null;
   v4g?: number | null;
-  // fallback keys just in case
   value?: number | null;
   avg_overall_pct?: number | null;
 };
 
-/* ----- gradient for district/grid cells: scale 1..100 ----- */
 const pctCellStyle = (
   val: number | null | undefined
 ): React.CSSProperties | undefined => {
@@ -236,7 +237,6 @@ function AvailabilityInner() {
   const setErrorKey = (k: LoadKey, v: string | null) =>
     setErrors((st) => ({ ...st, [k]: v }));
 
-  /* bounds */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -244,8 +244,7 @@ function AvailabilityInner() {
       setErrorKey("bounds", null);
       try {
         const b = await fetchCaDateBounds();
-        if (!cancelled)
-          setBounds({ minISO: b?.minISO ?? null, maxISO: b?.maxISO ?? null });
+        if (!cancelled) setBounds({ minISO: b.minISO, maxISO: b.maxISO });
       } catch (e: unknown) {
         if (!cancelled)
           setErrorKey(
@@ -261,7 +260,6 @@ function AvailabilityInner() {
     };
   }, []);
 
-  /* KPIs + subregion table */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -285,17 +283,20 @@ function AvailabilityInner() {
             classGroup: "SB",
           }),
         ]);
+
         if (cancelled) return;
 
-        setRows(roll ?? []);
+        setRows(roll);
         setPgsBelowList(
-          dedupeBySite((pgsList ?? []).filter(belowFilter)).sort(
-            (a, b) => (a.avg_overall_pct ?? 0) - (b.avg_overall_pct ?? 0)
+          dedupeBySite(pgsList.filter(belowFilter)).sort(
+            (a: HitlistRow, b: HitlistRow) =>
+              (a.avg_overall_pct ?? 0) - (b.avg_overall_pct ?? 0)
           )
         );
         setSbBelowList(
-          dedupeBySite((sbList ?? []).filter(belowFilter)).sort(
-            (a, b) => (a.avg_overall_pct ?? 0) - (b.avg_overall_pct ?? 0)
+          dedupeBySite(sbList.filter(belowFilter)).sort(
+            (a: HitlistRow, b: HitlistRow) =>
+              (a.avg_overall_pct ?? 0) - (b.avg_overall_pct ?? 0)
           )
         );
       } catch (e: unknown) {
@@ -320,7 +321,6 @@ function AvailabilityInner() {
     };
   }, [region, frequency, toStr]);
 
-  /* trend + district/grid */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -328,9 +328,8 @@ function AvailabilityInner() {
       setLoadingKey("bars", true);
       setErrorKey("trend", null);
       setErrorKey("bars", null);
-      try {
-        type DailyRow = Readonly<{ date?: string; overall?: number | null }>;
 
+      try {
         const bundle = await fetchCellAvailBundle({
           region,
           subregion: null,
@@ -343,18 +342,20 @@ function AvailabilityInner() {
 
         if (cancelled) return;
 
-        const daily = [...(bundle.daily ?? [])]
+        const daily = bundle.daily
+          .filter(
+            (d): d is { date: string; overall: number | null } =>
+              typeof d.date === "string"
+          )
           .filter(
             (d): d is { date: string; overall: number } =>
-              typeof (d as DailyRow).date === "string" &&
-              typeof (d as DailyRow).overall === "number" &&
-              Number.isFinite((d as DailyRow).overall as number)
+              typeof d.overall === "number" && Number.isFinite(d.overall)
           )
-          .map((d) => ({ date: (d as DailyRow).date!, overall: d.overall! }));
+          .map((d) => ({ date: d.date, overall: d.overall }));
 
         setOverallSeries(daily);
-        setDistrictBars([...(bundle.by_district ?? [])] as LevelAggRow[]);
-        setGridBars([...(bundle.by_grid ?? [])] as LevelAggRow[]);
+        setDistrictBars(bundle.by_district);
+        setGridBars(bundle.by_grid);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Failed to load charts";
         if (!cancelled) {
@@ -376,21 +377,26 @@ function AvailabilityInner() {
     };
   }, [region, fromStr, toStr]);
 
-  /* KPI rollups */
   const { kpiNetAvg, kpiTotalSites, kpiTotalDG, kpiPgsBelow, kpiSbBelow } =
     useMemo(() => {
-      const pgsSites = rows.reduce((s2, r) => s2 + (r.pgs_site_count || 0), 0);
-      const sbSites = rows.reduce((s2, r) => s2 + (r.sb_site_count || 0), 0);
+      const pgsSites = rows.reduce(
+        (s2: number, r: SubregionTargetsRow) => s2 + (r.pgs_site_count || 0),
+        0
+      );
+      const sbSites = rows.reduce(
+        (s2: number, r: SubregionTargetsRow) => s2 + (r.sb_site_count || 0),
+        0
+      );
       const denom = pgsSites + sbSites || 1;
 
       const weighted =
         (rows.reduce(
-          (s2, r) =>
+          (s2: number, r: SubregionTargetsRow) =>
             s2 + (r.pgs_avg_overall_pct || 0) * (r.pgs_site_count || 0),
           0
         ) +
           rows.reduce(
-            (s2, r) =>
+            (s2: number, r: SubregionTargetsRow) =>
               s2 + (r.sb_avg_overall_pct || 0) * (r.sb_site_count || 0),
             0
           )) /
@@ -399,9 +405,18 @@ function AvailabilityInner() {
       return {
         kpiNetAvg: weighted,
         kpiTotalSites: pgsSites + sbSites,
-        kpiTotalDG: rows.reduce((s2, r) => s2 + (r.dg_site_count || 0), 0),
-        kpiPgsBelow: rows.reduce((s2, r) => s2 + (r.pgs_below_count || 0), 0),
-        kpiSbBelow: rows.reduce((s2, r) => s2 + (r.sb_below_count || 0), 0),
+        kpiTotalDG: rows.reduce(
+          (s2: number, r: SubregionTargetsRow) => s2 + (r.dg_site_count || 0),
+          0
+        ),
+        kpiPgsBelow: rows.reduce(
+          (s2: number, r: SubregionTargetsRow) => s2 + (r.pgs_below_count || 0),
+          0
+        ),
+        kpiSbBelow: rows.reduce(
+          (s2: number, r: SubregionTargetsRow) => s2 + (r.sb_below_count || 0),
+          0
+        ),
       };
     }, [rows]);
 
@@ -409,7 +424,7 @@ function AvailabilityInner() {
 
   const sortedDistrictRows = useMemo(() => {
     const copy = [...districtBars];
-    copy.sort((a, b) => {
+    copy.sort((a: LevelAggRow, b: LevelAggRow) => {
       const av = (a.overall ?? a.avg_overall_pct ?? a.value ?? 0) || 0;
       const bv = (b.overall ?? b.avg_overall_pct ?? b.value ?? 0) || 0;
       return districtSortDir === "asc" ? av - bv : bv - av;
@@ -419,7 +434,7 @@ function AvailabilityInner() {
 
   const sortedGridRows = useMemo(() => {
     const copy = [...gridBars];
-    copy.sort((a, b) => {
+    copy.sort((a: LevelAggRow, b: LevelAggRow) => {
       const av = (a.overall ?? a.avg_overall_pct ?? a.value ?? 0) || 0;
       const bv = (b.overall ?? b.avg_overall_pct ?? b.value ?? 0) || 0;
       return gridSortDir === "asc" ? av - bv : bv - av;
@@ -438,7 +453,6 @@ function AvailabilityInner() {
     <div className="dark">
       <div className="min-h-screen bg-slate-950 text-slate-100">
         <div className="mx-auto max-w-7xl px-3 sm:px-4 py-6 space-y-4">
-          {/* Date bounds strip */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-2 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="h-8 w-8 rounded-lg bg-slate-800 flex items-center justify-center">
@@ -477,7 +491,6 @@ function AvailabilityInner() {
             </div>
           </div>
 
-          {/* Header */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="h-9 w-9 rounded-lg bg-slate-800 flex items-center justify-center">
@@ -511,15 +524,14 @@ function AvailabilityInner() {
             </div>
           </div>
 
-          {/* KPI cards */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {[
               { label: "Net Avg Overall", value: `${num(kpiNetAvg)}%` },
-              { label: "Distinct Sites", value: num(kpiTotalSites) },
-              { label: "DG Sites", value: num(kpiTotalDG) },
+              { label: "Distinct Sites", value: num(kpiTotalSites, 0) },
+              { label: "DG Sites", value: num(kpiTotalDG, 0) },
               { label: "PGS Below", value: num(kpiPgsBelow, 0) },
               { label: "SB Below", value: num(kpiSbBelow, 0) },
-            ].map((k) => (
+            ].map((k: { label: string; value: string }) => (
               <Card key={k.label} className="border-slate-800 bg-slate-900/70">
                 <CardHeader className="pb-1">
                   <CardTitle className="text-xs text-slate-300">
@@ -539,7 +551,6 @@ function AvailabilityInner() {
             ))}
           </div>
 
-          {/* ✅ SubRegion table BELOW cards (as you asked) */}
           <SubregionTable
             rows={rows}
             columnRanges={columnRanges}
@@ -547,7 +558,6 @@ function AvailabilityInner() {
             error={errors.table}
           />
 
-          {/* Overall chart BELOW SubRegion table */}
           <Card className="border-slate-800 bg-slate-900/70">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Overall Availability</CardTitle>
@@ -598,7 +608,6 @@ function AvailabilityInner() {
             </CardContent>
           </Card>
 
-          {/* District / Grid tables */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <MetricTable
               title="District · Availability (%)"
@@ -627,7 +636,6 @@ function AvailabilityInner() {
   );
 }
 
-/* ---------------- Reusable Metric Table ---------------- */
 function MetricTable({
   title,
   rows,
@@ -643,9 +651,7 @@ function MetricTable({
   sortDir: "asc" | "desc";
   onToggleSort: () => void;
 }) {
-  // height tuned for ~10 rows view (depends on font/row padding)
   const bodyHeight = "h-[360px]";
-
   const getOverall = (r: LevelAggRow) =>
     (r.overall ?? r.avg_overall_pct ?? r.value ?? null) as number | null;
 
@@ -701,7 +707,7 @@ function MetricTable({
               </TableHeader>
 
               <TableBody>
-                {rows.map((r, idx) => {
+                {rows.map((r: LevelAggRow, idx: number) => {
                   const ov = getOverall(r);
                   const v2 = r.v2g ?? null;
                   const v3 = r.v3g ?? null;
@@ -715,31 +721,22 @@ function MetricTable({
                       <TableCell className="font-medium">
                         {r.name ?? "—"}
                       </TableCell>
-
                       <TableCell
                         className="text-right tabular-nums"
                         style={pctCellStyle(ov)}
-                      >
-                        {`${num(ov)}%`}
-                      </TableCell>
+                      >{`${num(ov)}%`}</TableCell>
                       <TableCell
                         className="text-right tabular-nums"
                         style={pctCellStyle(v2)}
-                      >
-                        {`${num(v2)}%`}
-                      </TableCell>
+                      >{`${num(v2)}%`}</TableCell>
                       <TableCell
                         className="text-right tabular-nums"
                         style={pctCellStyle(v3)}
-                      >
-                        {`${num(v3)}%`}
-                      </TableCell>
+                      >{`${num(v3)}%`}</TableCell>
                       <TableCell
                         className="text-right tabular-nums"
                         style={pctCellStyle(v4)}
-                      >
-                        {`${num(v4)}%`}
-                      </TableCell>
+                      >{`${num(v4)}%`}</TableCell>
                     </TableRow>
                   );
                 })}
@@ -752,7 +749,6 @@ function MetricTable({
   );
 }
 
-/* ---------------- SubRegion Table ---------------- */
 function SubregionTable({
   rows,
   columnRanges,
@@ -760,7 +756,7 @@ function SubregionTable({
   error,
 }: {
   rows: SubregionTargetsRow[];
-  columnRanges: Record<keyof SubregionTargetsRow & KeyNum, Range>;
+  columnRanges: Record<KeyNum, Range>;
   loading: boolean;
   error: string | null;
 }) {
@@ -792,7 +788,7 @@ function SubregionTable({
                 <TableRow className="border-slate-800">
                   <TableHead className="w-[180px]">SubRegion</TableHead>
                   <TableHead className="w-[110px]">Region</TableHead>
-                  {ALL_KEYS.map((k) => (
+                  {ALL_KEYS.map((k: KeyNum) => (
                     <TableHead key={k} className="text-right">
                       {
                         {
@@ -816,7 +812,7 @@ function SubregionTable({
               </TableHeader>
 
               <TableBody>
-                {rows.map((r, idx) => (
+                {rows.map((r: SubregionTargetsRow, idx: number) => (
                   <TableRow
                     key={`${r.subregion}-${r.region_key}-${idx}`}
                     className="border-slate-800/70"
@@ -824,9 +820,9 @@ function SubregionTable({
                     <TableCell className="font-medium">{r.subregion}</TableCell>
                     <TableCell>{r.region_key}</TableCell>
 
-                    {ALL_KEYS.map((k) => {
+                    {ALL_KEYS.map((k: KeyNum) => {
                       const { min, max } = columnRanges[k];
-                      const val = r[k] as unknown as number | null | undefined;
+                      const val = r[k];
 
                       const isPct =
                         k === "pgs_target_pct" ||
@@ -840,6 +836,13 @@ function SubregionTable({
                           ? 0
                           : 0.32;
 
+                      const ratio =
+                        typeof val === "number" &&
+                        Number.isFinite(val) &&
+                        max > min
+                          ? (val - min) / (max - min)
+                          : 0;
+
                       const style =
                         alpha === 0
                           ? undefined
@@ -847,17 +850,7 @@ function SubregionTable({
                               backgroundImage: `linear-gradient(to right, hsla(${
                                 isPct ? 160 : 220
                               }, 85%, 45%, ${alpha}) ${Math.round(
-                                Math.max(
-                                  0,
-                                  Math.min(
-                                    1,
-                                    typeof val === "number" &&
-                                      Number.isFinite(val) &&
-                                      max > min
-                                      ? (val - min) / (max - min)
-                                      : 0
-                                  )
-                                ) * 100
+                                Math.max(0, Math.min(1, ratio)) * 100
                               )}%, transparent 0%)`,
                             } as React.CSSProperties);
 
@@ -893,26 +886,29 @@ function buildClassCsv(cls: "PGS" | "SB", rows: HitlistRow[]): string {
     "target_pct",
     "gap_pct",
   ].join(",");
-  const lines = rows.map((r) => {
-    const a = r?.avg_overall_pct ?? 0;
-    const t = r?.target_pct ?? 0;
+  const lines = rows.map((r: HitlistRow) => {
+    const a = r.avg_overall_pct ?? 0;
+    const t = r.target_pct ?? 0;
     const g = t - a;
+
     const vals: Array<string | number> = [
       cls,
-      r?.site_name ?? "",
-      r?.subregion ?? "",
-      r?.region_key ?? "",
-      a.toFixed(2),
-      t.toFixed(2),
-      g.toFixed(2),
+      r.site_name ?? "",
+      r.subregion ?? "",
+      r.region_key ?? "",
+      a.toFixed(4),
+      t.toFixed(4),
+      g.toFixed(4),
     ];
+
     return vals
-      .map((s) => {
+      .map((s: string | number) => {
         const v = String(s ?? "");
         return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
       })
       .join(",");
   });
+
   return [header, ...lines].join("\n");
 }
 
@@ -933,7 +929,6 @@ function downloadCsvFor(
   URL.revokeObjectURL(url);
 }
 
-/* ---------------- Default export with Suspense wrapper ---------------- */
 export default function AvailabilityPage() {
   return (
     <Suspense

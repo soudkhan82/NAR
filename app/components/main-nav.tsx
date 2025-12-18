@@ -21,6 +21,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/RANExpansion", label: "RAN Expansion" },
   { href: "/PSCore/Subscribers", label: "PSCore-Subs" },
   { href: "/PSCore/Traffic", label: "PSCore-Traffic" },
+  { href: "/Rms", label: "RMS" },
 ];
 
 export default function MainNav() {

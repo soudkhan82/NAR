@@ -1,27 +1,11 @@
 // app/lib/rpc/avail.ts
 import supabase from "@/app/config/supabase-config";
 
-/* ── Enums + parsers ────────────────────────────────────────────────────── */
-export type Region = "North" | "Central" | "South" | "Nationwide";
+/* ---------------- Types ---------------- */
+export type Region = "ALL" | "North" | "Central" | "South";
 export type Frequency = "Daily" | "Weekly" | "Monthly";
 
-export function parseRegion(s: string | null): Region {
-  const v = (s ?? "").trim() as Region;
-  return ["North", "Central", "South", "Nationwide"].includes(v)
-    ? v
-    : "Nationwide";
-}
-
-export function parseFrequency(s: string | null): Frequency {
-  const v = (s ?? "").trim() as Frequency;
-  return ["Daily", "Weekly", "Monthly"].includes(v) ? v : "Daily";
-}
-
-const toSqlRegion = (r: Region) => (r === "Nationwide" ? null : r);
-
-/* ── Types used by page.tsx ─────────────────────────────────────────────── */
-
-export interface SubregionTargetsRow {
+export type SubregionTargetsRow = {
   subregion: string;
   region_key: string;
   pgs_target_pct: number;
@@ -36,49 +20,70 @@ export interface SubregionTargetsRow {
   pgs_below_count: number;
   sb_achieved_count: number;
   sb_below_count: number;
-}
+};
 
-export interface HitlistRow {
+export type HitlistRow = {
   site_name: string;
   subregion: string | null;
   region_key: string | null;
-  avg_overall_pct: number;
-  target_pct: number;
-  achieved: boolean;
-}
+  avg_overall_pct: number | null;
+  target_pct: number | null;
+  achieved: boolean | null;
+};
 
-export type BundleDailyRow = { date: string; overall?: number };
+export type CaDateBounds = { minISO: string | null; maxISO: string | null };
+
+export type BundleDailyRow = { date: string; overall: number | null };
 
 export type BundleAggRow = {
-  name: string;
-  overall?: number | null;
-  v2g?: number | null;
-  v3g?: number | null;
-  v4g?: number | null;
+  name: string | null;
+  overall: number | null;
+  v2g: number | null;
+  v3g: number | null;
+  v4g: number | null;
 };
 
-export type BundleResult = {
-  daily: ReadonlyArray<BundleDailyRow>;
-  by_district: ReadonlyArray<BundleAggRow>;
-  by_grid: ReadonlyArray<BundleAggRow>;
-  cards?: { site_count: number; avg_pgs: number | null; avg_sb: number | null };
+export type BundleCards = {
+  site_count: number | null;
+  avg_pgs: number | null;
+  avg_sb: number | null;
 };
 
-/* ── Date bounds ────────────────────────────────────────────────────────── */
-export async function fetchCaDateBounds(): Promise<{
-  minISO: string | null;
-  maxISO: string | null;
-}> {
+export type CellAvailBundle = {
+  daily: BundleDailyRow[];
+  by_grid: BundleAggRow[];
+  by_district: BundleAggRow[];
+  cards: BundleCards;
+};
+
+/* ---------------- Parsers ---------------- */
+export function parseRegion(v: string | null): Region {
+  if (!v) return "ALL";
+  const x = v.trim().toLowerCase();
+  if (x === "north") return "North";
+  if (x === "central") return "Central";
+  if (x === "south") return "South";
+  return "ALL";
+}
+
+export function parseFrequency(v: string | null): Frequency {
+  if (!v) return "Daily";
+  const x = v.trim().toLowerCase();
+  if (x === "weekly") return "Weekly";
+  if (x === "monthly") return "Monthly";
+  return "Daily";
+}
+
+/* ---------------- RPC wrappers ---------------- */
+function mapRegionToParam(region: Region): string | null {
+  return region === "ALL" ? null : region;
+}
+
+export async function fetchCaDateBounds(): Promise<CaDateBounds> {
   const { data, error } = await supabase.rpc("fetch_ca_date_bounds");
   if (error) throw new Error(error.message);
 
-  const row =
-    Array.isArray(data) && data.length > 0
-      ? (data[0] as { min_date?: string | null; max_date?: string | null })
-      : ((data ?? {}) as {
-          min_date?: string | null;
-          max_date?: string | null;
-        });
+  const row = Array.isArray(data) ? (data[0] as { min_date?: string; max_date?: string } | undefined) : undefined;
 
   return {
     minISO: row?.min_date ?? null,
@@ -86,88 +91,64 @@ export async function fetchCaDateBounds(): Promise<{
   };
 }
 
-/* ── RPC wrappers used by page.tsx ──────────────────────────────────────── */
-export interface RollupArgs {
+export async function fetchSubregionTargets(args: {
   region: Region;
   asOfISO: string; // YYYY-MM-DD
   frequency: Frequency;
-}
-
-export interface HitlistArgs extends RollupArgs {
-  classGroup: "PGS" | "SB";
-}
-
-export async function fetchSubregionTargets(
-  args: RollupArgs
-): Promise<SubregionTargetsRow[]> {
-  const { region, asOfISO, frequency } = args;
-  const { data, error } = await supabase.rpc(
-    "fetch_cell_avail_subregion_targets",
-    {
-      p_region: toSqlRegion(region),
-      p_asof: asOfISO,
-      p_freq: frequency,
-    }
-  );
-  if (error) throw new Error(error.message);
-  return (Array.isArray(data) ? data : []) as SubregionTargetsRow[];
-}
-
-export async function fetchTargetHitlist(
-  args: HitlistArgs
-): Promise<HitlistRow[]> {
-  const { region, asOfISO, frequency, classGroup } = args;
-  const { data, error } = await supabase.rpc(
-    "fetch_cell_avail_target_hitlist",
-    {
-      p_region: toSqlRegion(region),
-      p_asof: asOfISO,
-      p_freq: frequency,
-      p_class: classGroup,
-    }
-  );
-  if (error) throw new Error(error.message);
-  return (Array.isArray(data) ? data : []) as HitlistRow[];
-}
-
-/** Bundle JSON for overall trend + district/grid Overall/2G/3G/4G */
-export interface BundleFilters {
-  region?: Region;
-  subregion?: string | null;
-  grid?: string | null;
-  district?: string | null;
-  sitename?: string | null;
-  dateFrom: string; // YYYY-MM-DD
-  dateTo: string; // YYYY-MM-DD
-}
-
-export async function fetchCellAvailBundle(
-  filters: BundleFilters
-): Promise<BundleResult> {
-  const { data, error } = await supabase.rpc("fetch_cell_avail_bundle", {
-    in_region: filters.region ? toSqlRegion(filters.region) : null,
-    in_subregion: filters.subregion ?? null,
-    in_grid: filters.grid ?? null,
-    in_district: filters.district ?? null,
-    in_sitename: filters.sitename ?? null,
-    in_date_from: filters.dateFrom,
-    in_date_to: filters.dateTo,
+}): Promise<SubregionTargetsRow[]> {
+  const { data, error } = await supabase.rpc("fetch_cell_avail_subregion_targets", {
+    p_region: mapRegionToParam(args.region),
+    p_asof: args.asOfISO,
+    p_freq: args.frequency,
   });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SubregionTargetsRow[];
+}
+
+export async function fetchTargetHitlist(args: {
+  region: Region;
+  asOfISO: string;
+  frequency: Frequency;
+  classGroup: "PGS" | "SB";
+}): Promise<HitlistRow[]> {
+  const { data, error } = await supabase.rpc("fetch_cell_avail_target_hitlist", {
+    p_region: mapRegionToParam(args.region),
+    p_asof: args.asOfISO,
+    p_freq: args.frequency,
+    p_class: args.classGroup,
+  });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as HitlistRow[];
+}
+
+export async function fetchCellAvailBundle(args: {
+  dateFrom: string; // YYYY-MM-DD
+  dateTo: string;   // YYYY-MM-DD
+  region: Region;
+  subregion: string | null;
+  grid: string | null;
+  district: string | null;
+  sitename: string | null;
+}): Promise<CellAvailBundle> {
+  const { data, error } = await supabase.rpc("fetch_cell_avail_bundle", {
+    in_date_from: args.dateFrom,
+    in_date_to: args.dateTo,
+    in_region: mapRegionToParam(args.region),
+    in_subregion: args.subregion,
+    in_grid: args.grid,
+    in_district: args.district,
+    in_sitename: args.sitename,
+  });
+
   if (error) throw new Error(error.message);
 
-  const obj = (data ?? {}) as Partial<BundleResult> & {
-    daily?: Array<{ date?: string; overall?: number }>;
-  };
-
+  const obj = (data ?? {}) as Partial<CellAvailBundle>;
   return {
-    daily: Array.isArray(obj.daily)
-      ? obj.daily
-          .filter((d) => typeof d?.date === "string")
-          .map((d) => ({ date: d!.date!, overall: d?.overall }))
-      : [],
-    by_district: Array.isArray(obj.by_district) ? obj.by_district : [],
+    daily: Array.isArray(obj.daily) ? obj.daily : [],
     by_grid: Array.isArray(obj.by_grid) ? obj.by_grid : [],
-    cards: obj.cards ?? { site_count: 0, avg_pgs: null, avg_sb: null },
+    by_district: Array.isArray(obj.by_district) ? obj.by_district : [],
+    cards: (obj.cards ?? { site_count: null, avg_pgs: null, avg_sb: null }) as BundleCards,
   };
 }
-  
