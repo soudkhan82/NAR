@@ -42,6 +42,15 @@ import {
   Tooltip,
 } from "recharts";
 
+// ✅ Center-screen popup (ShadCN)
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+
 /* ================= Types (aligned with RPC outputs) ================= */
 type SiteAggRow = RpcSiteAggRow;
 type NeighborRow = RpcNeighborRow;
@@ -50,8 +59,7 @@ type NeighborRow = RpcNeighborRow;
 type WeekWindow = "all" | "4" | "8" | "12" | "24";
 
 /* ================= Helpers ================= */
-const POPUP_WIDTH = 380; // click-popup width
-const POPUP_MAX_HEIGHT = 420; // click-popup max height
+const POPUP_WIDTH = 380; // hover-popup width
 const CHART_HEIGHT = 200;
 
 const fmtN = (n: number | null | undefined) =>
@@ -94,7 +102,7 @@ const buildDateRangeFromWeekWindow = (
   }
 
   const weeks = Number(weekWindow);
-  const today = new Date(); // simple local date; no need to overcomplicate
+  const today = new Date();
   const to = new Date(today);
   const from = new Date(today);
   from.setDate(to.getDate() - weeks * 7 + 1);
@@ -133,12 +141,16 @@ export default function ComplaintsGeoPage() {
   const [svcCounts, setSvcCounts] = useState<ServiceCountRow[]>([]);
   const [gridCounts, setGridCounts] = useState<GridCountRow[]>([]);
 
+  /** ✅ Center-screen details dialog state */
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsErr, setDetailsErr] = useState<string | null>(null);
+
   /** Map refs */
   const mapRef = useRef<MLMap | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const markersRef = useRef<MarkerRec[]>([]);
-  const popupRef = useRef<Popup | null>(null); // click popup
-  const hoverPopupRef = useRef<Popup | null>(null); // hover popup
+  const hoverPopupRef = useRef<Popup | null>(null); // hover popup only
 
   /* ---------------- Map init (Dark basemap + zoom controls) ---------------- */
   useEffect(() => {
@@ -158,14 +170,12 @@ export default function ComplaintsGeoPage() {
       zoom: 4.8,
     });
 
-    // Zoom +/- controls
     map.addControl(
       new maplibregl.NavigationControl({ showCompass: false }),
       "top-right"
     );
 
     map.on("load", () => {
-      // Carto Dark Matter tiles
       const darkSource: RasterSourceSpecification = {
         type: "raster",
         tiles: [
@@ -271,80 +281,207 @@ export default function ComplaintsGeoPage() {
     };
   }, [region, subRegion, district]);
 
-  /* ---------------- Build markers (hover+click, threshold colors) ---------------- */
-  const rebuildMarkers = useCallback((rows: SiteAggRow[]) => {
-    // clear old
-    markersRef.current.forEach((m) => m.marker.remove());
-    markersRef.current = [];
-    if (!mapRef.current) return;
+  /* ---------------- Selection: recolor, zoom ---------------- */
+  const colorizeMarkers = useCallback(
+    (selectedName: string, neighborNames: Set<string>) => {
+      markersRef.current.forEach((rec) => {
+        const el = rec.marker.getElement() as HTMLDivElement & {
+          dataset: { baseColor?: string };
+        };
+        if (rec.siteName === selectedName) {
+          el.style.background = "rgba(37, 99, 235, 0.9)"; // blue selected
+        } else if (neighborNames.has(rec.siteName)) {
+          el.style.background = "rgba(220, 38, 38, 0.9)"; // red neighbors
+        } else {
+          el.style.background = el.dataset.baseColor ?? "rgba(0,0,0,0.6)";
+        }
+      });
+    },
+    []
+  );
 
-    // scale 6..28 px by complaints_count
-    const vals = rows.map((r) => r.complaints_count);
-    const minV = vals.length ? Math.min(...vals) : 0;
-    const maxV = vals.length ? Math.max(...vals) : 1;
-    const scale = (v: number) => {
-      const t = maxV === minV ? 1 : (v - minV) / (maxV - minV);
-      return 6 + t * 22;
-    };
-
-    rows.forEach((r) => {
-      if (typeof r.Longitude !== "number" || typeof r.Latitude !== "number")
+  const fitToSelectedAndNeighbors = useCallback(
+    (sel: SiteAggRow, nb: NeighborRow[]) => {
+      if (!mapRef.current) return;
+      if (typeof sel.Longitude !== "number" || typeof sel.Latitude !== "number")
         return;
 
-      const el = document.createElement("div");
-      const px = scale(r.complaints_count);
-      el.style.width = `${px}px`;
-      el.style.height = `${px}px`;
-      el.style.borderRadius = "9999px";
-      const baseCol = complaintsColor(r.complaints_count);
-      el.style.background = baseCol;
-      (el as any).dataset.baseColor = baseCol;
-      el.style.border = "2px solid #fff";
-      el.style.cursor = "pointer";
-      el.title = `${r.SiteName} • ${fmtN(r.complaints_count)} complaints`;
+      const coords: Array<[number, number]> = [[sel.Longitude, sel.Latitude]];
+      nb.forEach((n) => {
+        const lon = n.Longitude;
+        const lat = n.Latitude;
+        if (typeof lon === "number" && typeof lat === "number")
+          coords.push([lon, lat]);
+      });
 
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat([r.Longitude, r.Latitude])
-        .addTo(mapRef.current as MLMap);
+      if (coords.length > 1) {
+        const lons = coords.map((c) => c[0]);
+        const lats = coords.map((c) => c[1]);
+        mapRef.current.fitBounds(
+          [
+            [Math.min(...lons), Math.min(...lats)],
+            [Math.max(...lons), Math.max(...lats)],
+          ],
+          { padding: 60, duration: 500 }
+        );
+      } else {
+        mapRef.current.easeTo({ center: coords[0], zoom: 12, duration: 500 });
+      }
+    },
+    []
+  );
 
-      // Hover popup (aligned to RIGHT of point)
-      const onEnter = () => {
-        hoverPopupRef.current?.remove();
-        const html = `
-          <div style="font-size:12px; line-height:1.25">
-            <div><strong>Site:</strong> ${r.SiteName}</div>
-            <div><strong>Grid:</strong> ${r.Grid ?? "—"}</div>
-            <div><strong>District:</strong> ${r.District ?? "—"}</div>
-            <div><strong>Complaints:</strong> ${fmtN(r.complaints_count)}</div>
-          </div>
-        `;
-        const p = new maplibregl.Popup({
-          closeButton: false,
-          closeOnClick: false,
-          anchor: "left",
-          offset: [12, 0],
-          maxWidth: `${POPUP_WIDTH}px`,
-        })
-          .setLngLat([r.Longitude as number, r.Latitude as number])
-          .setHTML(html)
-          .addTo(mapRef.current as MLMap);
+  /* ---------------- Center-screen select handler (Dialog) ---------------- */
+  const handleSelectSite = useCallback(
+    async (site: SiteAggRow) => {
+      setSelectedSite(site);
+      setDetailsOpen(true);
+      setDetailsLoading(true);
+      setDetailsErr(null);
 
-        p.getElement().style.zIndex = "60"; // above tables
-        hoverPopupRef.current = p;
-      };
-      const onLeave = () => {
+      const idBig = toBigint(site.SiteName);
+
+      // clear old details immediately
+      setNeighbors([]);
+      setTs([]);
+      setBadges([]);
+
+      try {
+        let tsData: TsRow[] = [];
+        let badgesData: ServiceBadgeRow[] = [];
+        let nbData: NeighborRow[] = [];
+
+        if (idBig) {
+          [tsData, badgesData, nbData] = await Promise.all([
+            fetchTimeseries(idBig, null, null),
+            fetchServiceBadges(idBig, null, null),
+            fetchNeighbors(idBig, 5),
+          ]);
+        }
+
+        setTs(tsData);
+        setBadges(badgesData);
+        setNeighbors(nbData);
+
+        colorizeMarkers(
+          site.SiteName,
+          new Set(nbData.map((n) => n.NeighborSiteName))
+        );
+
+        // close hover popup on select
         hoverPopupRef.current?.remove();
         hoverPopupRef.current = null;
+
+        fitToSelectedAndNeighbors(site, nbData);
+      } catch (e) {
+        console.error("handleSelectSite error", e);
+        setDetailsErr("Failed to load site details.");
+      } finally {
+        setDetailsLoading(false);
+      }
+    },
+    [colorizeMarkers, fitToSelectedAndNeighbors]
+  );
+
+  // Helper: select by name + known coordinates (for neighbor clicks)
+  const handleSelectByName = useCallback(
+    async (
+      siteName: string,
+      lon: number | null | undefined,
+      lat: number | null | undefined,
+      extras: Partial<SiteAggRow> = {}
+    ) => {
+      const site = {
+        SiteName: siteName,
+        Longitude: lon ?? undefined,
+        Latitude: lat ?? undefined,
+        ...extras,
+      } as SiteAggRow;
+      await handleSelectSite(site);
+    },
+    [handleSelectSite]
+  );
+
+  /* ---------------- Build markers (hover+click, threshold colors) ---------------- */
+  const rebuildMarkers = useCallback(
+    (rows: SiteAggRow[]) => {
+      // clear old
+      markersRef.current.forEach((m) => m.marker.remove());
+      markersRef.current = [];
+      if (!mapRef.current) return;
+
+      // scale 6..28 px by complaints_count
+      const vals = rows.map((r) => r.complaints_count ?? 0);
+      const minV = vals.length ? Math.min(...vals) : 0;
+      const maxV = vals.length ? Math.max(...vals) : 1;
+      const scale = (v: number) => {
+        const t = maxV === minV ? 1 : (v - minV) / (maxV - minV);
+        return 6 + t * 22;
       };
-      el.addEventListener("mouseenter", onEnter);
-      el.addEventListener("mouseleave", onLeave);
 
-      // Click details
-      el.addEventListener("click", () => void handleSelectSite(r));
+      rows.forEach((r) => {
+        if (typeof r.Longitude !== "number" || typeof r.Latitude !== "number")
+          return;
 
-      markersRef.current.push({ siteName: r.SiteName, marker });
-    });
-  }, []);
+        const el = document.createElement("div");
+        const px = scale(r.complaints_count ?? 0);
+        el.style.width = `${px}px`;
+        el.style.height = `${px}px`;
+        el.style.borderRadius = "9999px";
+        const baseCol = complaintsColor(r.complaints_count);
+        el.style.background = baseCol;
+        (el as any).dataset.baseColor = baseCol;
+        el.style.border = "2px solid #fff";
+        el.style.cursor = "pointer";
+        el.title = `${r.SiteName} • ${fmtN(r.complaints_count)} complaints`;
+
+        const marker = new maplibregl.Marker({ element: el })
+          .setLngLat([r.Longitude, r.Latitude])
+          .addTo(mapRef.current as MLMap);
+
+        // Hover popup (aligned to RIGHT of point)
+        const onEnter = () => {
+          hoverPopupRef.current?.remove();
+          const html = `
+            <div style="font-size:12px; line-height:1.25">
+              <div><strong>Site:</strong> ${r.SiteName}</div>
+              <div><strong>Grid:</strong> ${r.Grid ?? "—"}</div>
+              <div><strong>District:</strong> ${r.District ?? "—"}</div>
+              <div><strong>Complaints:</strong> ${fmtN(
+                r.complaints_count
+              )}</div>
+              <div style="margin-top:6px; opacity:0.85"><em>Click marker for details</em></div>
+            </div>
+          `;
+          const p = new maplibregl.Popup({
+            closeButton: false,
+            closeOnClick: false,
+            anchor: "left",
+            offset: [12, 0],
+            maxWidth: `${POPUP_WIDTH}px`,
+          })
+            .setLngLat([r.Longitude as number, r.Latitude as number])
+            .setHTML(html)
+            .addTo(mapRef.current as MLMap);
+
+          p.getElement().style.zIndex = "60";
+          hoverPopupRef.current = p;
+        };
+        const onLeave = () => {
+          hoverPopupRef.current?.remove();
+          hoverPopupRef.current = null;
+        };
+        el.addEventListener("mouseenter", onEnter);
+        el.addEventListener("mouseleave", onLeave);
+
+        // ✅ Click now opens center-screen dialog
+        el.addEventListener("click", () => void handleSelectSite(r));
+
+        markersRef.current.push({ siteName: r.SiteName, marker });
+      });
+    },
+    [handleSelectSite]
+  );
 
   /* ---------------- Load sites + centroid zoom ---------------- */
   const loadSites = useCallback(async () => {
@@ -390,204 +527,6 @@ export default function ComplaintsGeoPage() {
     void loadSites();
   }, [loadSites]);
 
-  /* ---------------- Selection: recolor, popup, zoom ---------------- */
-  const colorizeMarkers = useCallback(
-    (selectedName: string, neighborNames: Set<string>) => {
-      markersRef.current.forEach((rec) => {
-        const el = rec.marker.getElement() as HTMLDivElement & {
-          dataset: { baseColor?: string };
-        };
-        if (rec.siteName === selectedName) {
-          el.style.background = "rgba(37, 99, 235, 0.9)"; // blue selected
-        } else if (neighborNames.has(rec.siteName)) {
-          el.style.background = "rgba(220, 38, 38, 0.9)"; // red neighbors
-        } else {
-          el.style.background = el.dataset.baseColor ?? "rgba(0,0,0,0.6)";
-        }
-      });
-    },
-    []
-  );
-
-  const fitToSelectedAndNeighbors = useCallback(
-    (sel: SiteAggRow, nb: NeighborRow[]) => {
-      if (!mapRef.current) return;
-      if (typeof sel.Longitude !== "number" || typeof sel.Latitude !== "number")
-        return;
-      const coords: Array<[number, number]> = [[sel.Longitude, sel.Latitude]];
-      nb.forEach((n) => {
-        const lon = n.Longitude;
-        const lat = n.Latitude;
-        if (typeof lon === "number" && typeof lat === "number")
-          coords.push([lon, lat]);
-      });
-      if (coords.length > 1) {
-        const lons = coords.map((c) => c[0]);
-        const lats = coords.map((c) => c[1]);
-        mapRef.current.fitBounds(
-          [
-            [Math.min(...lons), Math.min(...lats)],
-            [Math.max(...lons), Math.max(...lats)],
-          ],
-          { padding: 60, duration: 500 }
-        );
-      } else {
-        mapRef.current.easeTo({ center: coords[0], zoom: 12, duration: 500 });
-      }
-    },
-    []
-  );
-
-  const renderPopupContent = useCallback(async (site: SiteAggRow) => {
-    const id = `site-${site.SiteName}`;
-    const wrap = document.createElement("div");
-    wrap.style.width = `${POPUP_WIDTH}px`;
-    wrap.style.maxHeight = `${POPUP_MAX_HEIGHT}px`;
-    wrap.style.overflowY = "auto";
-    wrap.style.overflowX = "hidden";
-    wrap.innerHTML = `
-      <div style="font-size:12px; line-height:1.25">
-        <div style="margin-bottom:8px">
-          <div style="font-weight:600; font-size:14px">${site.SiteName}</div>
-          <div><strong>Region:</strong> ${site.Region ?? "—"}</div>
-          <div><strong>SubRegion:</strong> ${site.SubRegion ?? "—"}</div>
-          <div><strong>District:</strong> ${site.District ?? "—"}</div>
-          <div><strong>Grid:</strong> ${site.Grid ?? "—"}</div>
-          <div><strong>Address:</strong> ${site.Address ?? "—"}</div>
-          <div><strong>Total Complaints:</strong> ${fmtN(
-            site.complaints_count
-          )}</div>
-        </div>
-        <div id="${id}-chart" style="height:${CHART_HEIGHT}px;"></div>
-        <div id="${id}-badges" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
-      </div>
-    `;
-    return { wrap, chartId: `${id}-chart`, badgesId: `${id}-badges` };
-  }, []);
-
-  const mountChartAndBadges = useCallback(
-    async (
-      chartId: string,
-      badgesId: string,
-      tsData: TsRow[],
-      badgesData: ServiceBadgeRow[]
-    ) => {
-      const { createRoot } = await import("react-dom/client");
-      const chartHost = document.getElementById(chartId);
-      if (chartHost) {
-        const root = createRoot(chartHost);
-        root.render(
-          <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-            <LineChart data={tsData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="d" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="complaints_count" dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        );
-      }
-      const badgesHost = document.getElementById(badgesId);
-      if (badgesHost) {
-        badgesHost.innerHTML = badgesData
-          .map(
-            (b) =>
-              `<span style="background:#eef2ff;color:#1e3a8a;border:1px solid #c7d2fe;border-radius:999px;padding:3px 8px;font-size:11px;">
-                ${b.SERVICETITLE ?? "—"}: <strong>${fmtN(
-                b.complaints_count
-              )}</strong>
-              </span>`
-          )
-          .join("");
-      }
-    },
-    []
-  );
-
-  const handleSelectSite = useCallback(
-    async (site: SiteAggRow) => {
-      setSelectedSite(site);
-      const idBig = toBigint(site.SiteName);
-
-      setNeighbors([]);
-
-      let tsData: TsRow[] = [];
-      let badgesData: ServiceBadgeRow[] = [];
-      let nbData: NeighborRow[] = [];
-      if (idBig) {
-        [tsData, badgesData, nbData] = await Promise.all([
-          fetchTimeseries(idBig, null, null),
-          fetchServiceBadges(idBig, null, null),
-          fetchNeighbors(idBig, 5),
-        ]);
-      }
-
-      setTs(tsData);
-      setBadges(badgesData);
-      setNeighbors(nbData);
-
-      colorizeMarkers(
-        site.SiteName,
-        new Set(nbData.map((n) => n.NeighborSiteName))
-      );
-
-      hoverPopupRef.current?.remove();
-      hoverPopupRef.current = null;
-
-      // Click popup anchored to RIGHT of the point
-      if (
-        mapRef.current &&
-        typeof site.Longitude === "number" &&
-        typeof site.Latitude === "number"
-      ) {
-        popupRef.current?.remove();
-        const { wrap, chartId, badgesId } = await renderPopupContent(site);
-        popupRef.current = new maplibregl.Popup({
-          closeButton: true,
-          anchor: "left",
-          offset: [14, 0],
-          maxWidth: `${POPUP_WIDTH + 40}px`,
-        })
-          .setLngLat([site.Longitude, site.Latitude])
-          .setDOMContent(wrap)
-          .addTo(mapRef.current);
-
-        // Keep above tables
-        popupRef.current.getElement().style.zIndex = "60";
-
-        void mountChartAndBadges(chartId, badgesId, tsData, badgesData);
-      }
-
-      fitToSelectedAndNeighbors(site, nbData);
-    },
-    [
-      colorizeMarkers,
-      fitToSelectedAndNeighbors,
-      mountChartAndBadges,
-      renderPopupContent,
-    ]
-  );
-
-  // Helper: select by name + known coordinates (for neighbor clicks)
-  const handleSelectByName = useCallback(
-    async (
-      siteName: string,
-      lon: number | null | undefined,
-      lat: number | null | undefined,
-      extras: Partial<SiteAggRow> = {}
-    ) => {
-      const site = {
-        SiteName: siteName,
-        Longitude: lon ?? undefined,
-        Latitude: lat ?? undefined,
-        ...extras,
-      } as SiteAggRow;
-      await handleSelectSite(site);
-    },
-    [handleSelectSite]
-  );
-
   /* ---------------- Client-side search (approx match: includes) ---------------- */
   const [siteQuery, setSiteQuery] = useState<string>("");
   const [siteAddrQuery, setSiteAddrQuery] = useState<string>("");
@@ -627,13 +566,10 @@ export default function ComplaintsGeoPage() {
         grid: grid ?? null,
       };
 
-      // 1) Always fetch the full filter-scoped timeseries (for charts)
       const tsPromise = fetchTimeseriesAll(argsBase);
 
-      // 2) Build date range from weekWindow for the counts tables
       const { dateFrom, dateTo } = buildDateRangeFromWeekWindow(weekWindow);
 
-      // 3) Fetch counts WITH the same week window
       const [tsA, svc, grd] = await Promise.all([
         tsPromise,
         fetchCountsByService({ ...argsBase, dateFrom, dateTo }),
@@ -678,11 +614,9 @@ export default function ComplaintsGeoPage() {
   const topServiceSeries: ServiceSeries[] = useMemo(() => {
     if (!tsAll.length) return [];
 
-    // WEEK FILTER: compute cutoff date based on selected week window
     let cutoffDate: Date | null = null;
     if (weekWindow !== "all") {
       const weeks = Number(weekWindow);
-      // find max date present in tsAll
       let maxDate: Date | null = null;
       for (const row of tsAll) {
         const d = new Date(row.d);
@@ -705,7 +639,6 @@ export default function ComplaintsGeoPage() {
 
     const series: ServiceSeries[] = [];
     grouped.forEach((rows, key) => {
-      // WEEK FILTER: optionally filter rows by cutoffDate
       const filteredRows =
         cutoffDate === null
           ? rows
@@ -717,12 +650,10 @@ export default function ComplaintsGeoPage() {
         (sum, r) => sum + (r.complaints_count ?? 0),
         0
       );
-      // sort each series by date
       filteredRows.sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1));
       series.push({ service: key, points: filteredRows, total });
     });
 
-    // Sort by total complaints desc and take top 4
     series.sort((a, b) => b.total - a.total);
     return series.slice(0, 4);
   }, [tsAll, weekWindow]);
@@ -744,7 +675,7 @@ export default function ComplaintsGeoPage() {
   /* ---------------- Render ---------------- */
   return (
     <div className="p-4 space-y-4">
-      {/* Raise popups above surrounding layout */}
+      {/* Keep hover popups above surrounding layout (Dialog is separate) */}
       <style jsx global>{`
         .maplibregl-popup {
           z-index: 60 !important;
@@ -1116,6 +1047,182 @@ export default function ComplaintsGeoPage() {
           </div>
         </div>
       </div>
+
+      {/* ✅ CENTER-SCREEN DETAILS DIALOG */}
+      <Dialog
+        open={detailsOpen}
+        onOpenChange={(o) => {
+          setDetailsOpen(o);
+          if (!o) {
+            setDetailsErr(null);
+            setDetailsLoading(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              Site Details — {selectedSite?.SiteName ?? "—"}
+            </DialogTitle>
+          </DialogHeader>
+
+          {detailsLoading && (
+            <div className="py-6 text-sm text-muted-foreground">Loading…</div>
+          )}
+
+          {detailsErr && (
+            <div className="py-4 text-sm text-red-600">{detailsErr}</div>
+          )}
+
+          {!detailsLoading && !detailsErr && selectedSite && (
+            <div className="space-y-4">
+              {/* Top info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="font-semibold">Region:</span>{" "}
+                  {selectedSite.Region ?? "—"}
+                </div>
+                <div>
+                  <span className="font-semibold">SubRegion:</span>{" "}
+                  {selectedSite.SubRegion ?? "—"}
+                </div>
+                <div>
+                  <span className="font-semibold">District:</span>{" "}
+                  {selectedSite.District ?? "—"}
+                </div>
+                <div>
+                  <span className="font-semibold">Grid:</span>{" "}
+                  {selectedSite.Grid ?? "—"}
+                </div>
+                <div className="md:col-span-2">
+                  <span className="font-semibold">Address:</span>{" "}
+                  {selectedSite.Address ?? "—"}
+                </div>
+                <div className="md:col-span-2">
+                  <span className="font-semibold">Total Complaints:</span>{" "}
+                  {fmtN(selectedSite.complaints_count)}
+                </div>
+              </div>
+
+              {/* Trend chart */}
+              <div className="h-[260px] rounded-lg border bg-white p-2">
+                {ts.length ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={ts}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="d" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Line
+                        type="monotone"
+                        dataKey="complaints_count"
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                    No time-series data.
+                  </div>
+                )}
+              </div>
+
+              {/* Service badges */}
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">
+                  Complaints by Service
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {badges.length ? (
+                    badges.map((b, i) => (
+                      <Badge
+                        key={`${b.SERVICETITLE ?? "—"}-${i}`}
+                        variant="secondary"
+                        title={`${b.SERVICETITLE ?? "—"} • ${fmtN(
+                          b.complaints_count
+                        )}`}
+                      >
+                        {b.SERVICETITLE ?? "—"}
+                        <span className="ml-2 font-semibold tabular-nums">
+                          {fmtN(b.complaints_count)}
+                        </span>
+                      </Badge>
+                    ))
+                  ) : (
+                    <div className="text-xs text-muted-foreground">
+                      No service split data.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Neighbors quick list (click to open neighbor) */}
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">
+                  Neighbors (≤ 5 km)
+                </div>
+
+                <div className="max-h-[220px] overflow-auto rounded-lg border">
+                  <table className="min-w-full text-sm">
+                    <thead className="sticky top-0 bg-slate-100">
+                      <tr>
+                        <th className="text-left p-2">Neighbor</th>
+                        <th className="text-right p-2">Distance (km)</th>
+                        <th className="text-right p-2">Overall</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {neighbors.map((n, idx) => (
+                        <tr
+                          key={`${n.NeighborSiteName ?? "—"}-${idx}`}
+                          className="cursor-pointer hover:bg-blue-50"
+                          onClick={() =>
+                            void handleSelectByName(
+                              n.NeighborSiteName,
+                              n.Longitude,
+                              n.Latitude,
+                              {
+                                District: n.District ?? undefined,
+                                Grid: n.Grid ?? undefined,
+                                Address: n.Address ?? undefined,
+                              }
+                            )
+                          }
+                        >
+                          <td className="p-2">{n.NeighborSiteName ?? "—"}</td>
+                          <td className="p-2 text-right tabular-nums">
+                            {typeof n.distance_km === "number"
+                              ? n.distance_km.toFixed(2)
+                              : "—"}
+                          </td>
+                          <td className="p-2 text-right tabular-nums">
+                            {typeof n.latest_overall === "number"
+                              ? `${fmtAvail(n.latest_overall)}%`
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+
+                      {!neighbors.length && (
+                        <tr>
+                          <td className="p-2 text-muted-foreground" colSpan={3}>
+                            No neighbors.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="text-xs text-muted-foreground">
+                  Tip: click a neighbor to open it in this same dialog and zoom
+                  the map.
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
