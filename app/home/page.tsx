@@ -24,10 +24,10 @@ const TILES = [
   },
 
   {
-    key: "eas",
-    href: "/eas",
-    title: "EAS",
-    subtitle: "Energy & power dashboard",
+    key: "RMS",
+    href: "/Rms",
+    title: "RMS",
+    subtitle: "Remote Monitoring System",
     img: "/images/eas.jpg",
   },
   {
