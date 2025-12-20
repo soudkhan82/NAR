@@ -1,3 +1,4 @@
+// app/complaints/page.tsx
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -17,7 +18,7 @@ import {
   fetchDistricts,
   fetchGrids,
   fetchSitesAgg,
-  fetchSiteMeta, // ✅
+  fetchSiteMeta,
   fetchTimeseries,
   fetchServiceBadges,
   fetchNeighbors,
@@ -82,11 +83,12 @@ const norm = (s: unknown) =>
 
 type MarkerRec = { siteName: string; marker: Marker };
 
+/** complaint threshold palette (FILL) */
 const complaintsColor = (count: number | null | undefined): string => {
   const v = typeof count === "number" ? count : 0;
-  if (v > 40) return "rgba(220, 38, 38, 0.9)";
-  if (v >= 20) return "rgba(249, 115, 22, 0.9)";
-  return "rgba(234, 179, 8, 0.9)";
+  if (v > 40) return "rgba(220, 38, 38, 0.9)"; // red
+  if (v >= 20) return "rgba(249, 115, 22, 0.9)"; // orange
+  return "rgba(234, 179, 8, 0.9)"; // yellow
 };
 
 const SERVICE_COLORS = ["#ef4444", "#f97316", "#22c55e", "#3b82f6"] as const;
@@ -276,18 +278,31 @@ export default function ComplaintsGeoPage() {
   }, [region, subRegion, district]);
 
   /* ---------------- Selection: recolor + zoom ---------------- */
+  // ✅ IMPORTANT FIX:
+  // Keep fill color ALWAYS = complaints threshold.
+  // Use border/shadow ring for selected & neighbors so color meaning stays consistent.
   const colorizeMarkers = useCallback(
     (selectedName: string, neighborNames: Set<string>) => {
       markersRef.current.forEach((rec) => {
         const el = rec.marker.getElement() as HTMLDivElement & {
           dataset: { baseColor?: string };
         };
+
+        // Always keep fill = complaints color
+        el.style.background = el.dataset.baseColor ?? "rgba(0,0,0,0.6)";
+
+        // reset rings
+        el.style.border = "2px solid #fff";
+        el.style.boxShadow = "none";
+
         if (rec.siteName === selectedName) {
-          el.style.background = "rgba(37, 99, 235, 0.9)";
+          // selected ring (blue)
+          el.style.border = "3px solid rgba(37, 99, 235, 1)";
+          el.style.boxShadow = "0 0 0 3px rgba(37, 99, 235, 0.35)";
         } else if (neighborNames.has(rec.siteName)) {
-          el.style.background = "rgba(220, 38, 38, 0.9)";
-        } else {
-          el.style.background = el.dataset.baseColor ?? "rgba(0,0,0,0.6)";
+          // neighbors ring (red)
+          el.style.border = "3px solid rgba(220, 38, 38, 1)";
+          el.style.boxShadow = "0 0 0 3px rgba(220, 38, 38, 0.25)";
         }
       });
     },
@@ -387,7 +402,7 @@ export default function ComplaintsGeoPage() {
 
   const handleSelectByName = useCallback(
     async (siteName: string) => {
-      // ✅ minimal object; handleSelectSite will hydrate from SSL anyway
+      // minimal object; handleSelectSite hydrates from SSL
       await handleSelectSite({
         SiteName: siteName,
         Region: null,
@@ -575,9 +590,10 @@ export default function ComplaintsGeoPage() {
         grid: grid ?? null,
       };
 
+      // NOTE: tsAll returns ALL dates for the filters; we cut it client-side for top charts
       const tsPromise = fetchTimeseriesAll(argsBase);
-      const { dateFrom, dateTo } = buildDateRangeFromWeekWindow(weekWindow);
 
+      const { dateFrom, dateTo } = buildDateRangeFromWeekWindow(weekWindow);
       const [tsA, svc, grd] = await Promise.all([
         tsPromise,
         fetchCountsByService({ ...argsBase, dateFrom, dateTo }),
@@ -623,7 +639,7 @@ export default function ComplaintsGeoPage() {
       const weeks = Number(weekWindow);
       let maxDate: Date | null = null;
       for (const row of tsAll) {
-        const d = new Date(row.d);
+        const d = new Date(row.d as any);
         if (!maxDate || d > maxDate) maxDate = d;
       }
       if (maxDate) {
@@ -635,7 +651,7 @@ export default function ComplaintsGeoPage() {
 
     const grouped = new Map<string, TsAggRow[]>();
     tsAll.forEach((row) => {
-      const key = row.SERVICETITLE ?? "Unknown";
+      const key = (row as any).SERVICETITLE ?? "Unknown";
       const arr = grouped.get(key) ?? [];
       arr.push(row);
       grouped.set(key, arr);
@@ -646,7 +662,7 @@ export default function ComplaintsGeoPage() {
       const filteredRows =
         cutoffDate === null
           ? rows
-          : rows.filter((r) => new Date(r.d) >= cutoffDate);
+          : rows.filter((r) => new Date(r.d as any) >= cutoffDate);
 
       if (!filteredRows.length) return;
 
@@ -668,7 +684,6 @@ export default function ComplaintsGeoPage() {
   const selectedName = selectedSite?.SiteName ?? null;
 
   const onRowClick = (r: SiteAggRow) => void handleSelectSite(r);
-
   const onNeighborRowClick = (n: NeighborRow) =>
     void handleSelectByName(n.NeighborSiteName);
 
@@ -679,7 +694,6 @@ export default function ComplaintsGeoPage() {
     return selectedSite?.complaints_count ?? 0;
   }, [badges, selectedSite]);
 
-  /* ---------------- Render ---------------- */
   return (
     <div className="p-4 space-y-4">
       <style jsx global>{`
@@ -688,7 +702,48 @@ export default function ComplaintsGeoPage() {
         }
       `}</style>
 
-      <h1 className="text-xl font-semibold">Complaints Geo Dashboard</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Complaints Geo Dashboard</h1>
+
+        {/* legend (optional but helps users) */}
+        <div className="hidden md:flex items-center gap-3 text-xs text-slate-600">
+          <div className="flex items-center gap-1">
+            <span
+              className="inline-block h-3 w-3 rounded-full"
+              style={{ background: "rgba(234, 179, 8, 0.9)" }}
+            />
+            <span>{`< 20`}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span
+              className="inline-block h-3 w-3 rounded-full"
+              style={{ background: "rgba(249, 115, 22, 0.9)" }}
+            />
+            <span>{`20–40`}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span
+              className="inline-block h-3 w-3 rounded-full"
+              style={{ background: "rgba(220, 38, 38, 0.9)" }}
+            />
+            <span>{`> 40`}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span
+              className="inline-block h-3 w-3 rounded-full border-2"
+              style={{ borderColor: "rgba(37, 99, 235, 1)" }}
+            />
+            <span>Selected ring</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span
+              className="inline-block h-3 w-3 rounded-full border-2"
+              style={{ borderColor: "rgba(220, 38, 38, 1)" }}
+            />
+            <span>Neighbor ring</span>
+          </div>
+        </div>
+      </div>
 
       {/* TOP ROW – Filters + 4 ServiceTitle Time-series Charts */}
       <div className="space-y-3">
@@ -1174,7 +1229,7 @@ export default function ComplaintsGeoPage() {
                 </div>
               </div>
 
-              {/* Neighbors list (click opens neighbor in same dialog) */}
+              {/* Neighbors list */}
               <div className="space-y-2">
                 <div className="text-xs font-medium text-muted-foreground">
                   Neighbors (≤ 5 km)
