@@ -20,7 +20,7 @@ import {
   fetchTimeseries,
   fetchServiceBadges,
   fetchNeighbors,
-  fetchTimeseriesAll, // filter-scoped time series (with SERVICETITLE)
+  fetchTimeseriesAll,
   fetchCountsByService,
   fetchCountsByGrid,
   type SiteAggRow as RpcSiteAggRow,
@@ -55,15 +55,15 @@ import { Badge } from "@/components/ui/badge";
 type SiteAggRow = RpcSiteAggRow;
 type NeighborRow = RpcNeighborRow;
 
-// WEEK FILTER: allowed week windows for charts & tables
+// WEEK FILTER: allowed week windows for charts & tables (NOT for Dialog)
 type WeekWindow = "all" | "4" | "8" | "12" | "24";
 
 /* ================= Helpers ================= */
 const POPUP_WIDTH = 380; // hover-popup width
-const CHART_HEIGHT = 200;
 
 const fmtN = (n: number | null | undefined) =>
   typeof n === "number" ? n.toLocaleString() : "—";
+
 const fmtAvail = (v: number | null | undefined) =>
   typeof v === "number" ? (v * 100).toFixed(2) : "—";
 
@@ -93,13 +93,11 @@ const complaintsColor = (count: number | null | undefined): string => {
 /** Distinct colors for the 4 service charts */
 const SERVICE_COLORS = ["#ef4444", "#f97316", "#22c55e", "#3b82f6"] as const;
 
-/** Build date range (yyyy-mm-dd) from selected week window for counts tables */
+/** Build date range (yyyy-mm-dd) from selected week window for right tables/charts */
 const buildDateRangeFromWeekWindow = (
   weekWindow: WeekWindow
 ): { dateFrom: string | null; dateTo: string | null } => {
-  if (weekWindow === "all") {
-    return { dateFrom: null, dateTo: null };
-  }
+  if (weekWindow === "all") return { dateFrom: null, dateTo: null };
 
   const weeks = Number(weekWindow);
   const today = new Date();
@@ -118,7 +116,7 @@ export default function ComplaintsGeoPage() {
   const [district, setDistrict] = useState<string | null>(null);
   const [grid, setGrid] = useState<string | null>(null);
 
-  // WEEK FILTER: UI state for week window (affects charts + counts tables)
+  // ✅ Week window affects ONLY top charts + right tables (NOT dialog)
   const [weekWindow, setWeekWindow] = useState<WeekWindow>("all");
 
   /** Picklists */
@@ -131,17 +129,17 @@ export default function ComplaintsGeoPage() {
   const [sites, setSites] = useState<SiteAggRow[]>([]);
   const [neighbors, setNeighbors] = useState<NeighborRow[]>([]);
 
-  /** Selection details */
+  /** Selection details (Dialog) */
   const [selectedSite, setSelectedSite] = useState<SiteAggRow | null>(null);
   const [ts, setTs] = useState<TsRow[]>([]);
   const [badges, setBadges] = useState<ServiceBadgeRow[]>([]);
 
-  /** RIGHT SIDEBAR + CHART ROW DATA (filter scoped) */
+  /** RIGHT SIDEBAR + TOP CHART DATA (week-scoped) */
   const [tsAll, setTsAll] = useState<TsAggRow[]>([]);
   const [svcCounts, setSvcCounts] = useState<ServiceCountRow[]>([]);
   const [gridCounts, setGridCounts] = useState<GridCountRow[]>([]);
 
-  /** ✅ Center-screen details dialog state */
+  /** Center dialog state */
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsErr, setDetailsErr] = useState<string | null>(null);
@@ -197,7 +195,6 @@ export default function ComplaintsGeoPage() {
       map.addLayer(darkLayer);
     });
 
-    // Remove hover popup while panning/zooming
     map.on("movestart", () => {
       hoverPopupRef.current?.remove();
       hoverPopupRef.current = null;
@@ -289,9 +286,9 @@ export default function ComplaintsGeoPage() {
           dataset: { baseColor?: string };
         };
         if (rec.siteName === selectedName) {
-          el.style.background = "rgba(37, 99, 235, 0.9)"; // blue selected
+          el.style.background = "rgba(37, 99, 235, 0.9)"; // selected
         } else if (neighborNames.has(rec.siteName)) {
-          el.style.background = "rgba(220, 38, 38, 0.9)"; // red neighbors
+          el.style.background = "rgba(220, 38, 38, 0.9)"; // neighbors
         } else {
           el.style.background = el.dataset.baseColor ?? "rgba(0,0,0,0.6)";
         }
@@ -331,7 +328,7 @@ export default function ComplaintsGeoPage() {
     []
   );
 
-  /* ---------------- Center-screen select handler (Dialog) ---------------- */
+  /* ---------------- Center dialog select handler ---------------- */
   const handleSelectSite = useCallback(
     async (site: SiteAggRow) => {
       setSelectedSite(site);
@@ -341,7 +338,6 @@ export default function ComplaintsGeoPage() {
 
       const idBig = toBigint(site.SiteName);
 
-      // clear old details immediately
       setNeighbors([]);
       setTs([]);
       setBadges([]);
@@ -351,6 +347,7 @@ export default function ComplaintsGeoPage() {
         let badgesData: ServiceBadgeRow[] = [];
         let nbData: NeighborRow[] = [];
 
+        // ✅ IMPORTANT: dialog ignores weekWindow => dateFrom/dateTo ALWAYS null
         if (idBig) {
           [tsData, badgesData, nbData] = await Promise.all([
             fetchTimeseries(idBig, null, null),
@@ -368,7 +365,6 @@ export default function ComplaintsGeoPage() {
           new Set(nbData.map((n) => n.NeighborSiteName))
         );
 
-        // close hover popup on select
         hoverPopupRef.current?.remove();
         hoverPopupRef.current = null;
 
@@ -383,7 +379,6 @@ export default function ComplaintsGeoPage() {
     [colorizeMarkers, fitToSelectedAndNeighbors]
   );
 
-  // Helper: select by name + known coordinates (for neighbor clicks)
   const handleSelectByName = useCallback(
     async (
       siteName: string,
@@ -402,18 +397,17 @@ export default function ComplaintsGeoPage() {
     [handleSelectSite]
   );
 
-  /* ---------------- Build markers (hover+click, threshold colors) ---------------- */
+  /* ---------------- Build markers (hover+click) ---------------- */
   const rebuildMarkers = useCallback(
     (rows: SiteAggRow[]) => {
-      // clear old
       markersRef.current.forEach((m) => m.marker.remove());
       markersRef.current = [];
       if (!mapRef.current) return;
 
-      // scale 6..28 px by complaints_count
       const vals = rows.map((r) => r.complaints_count ?? 0);
       const minV = vals.length ? Math.min(...vals) : 0;
       const maxV = vals.length ? Math.max(...vals) : 1;
+
       const scale = (v: number) => {
         const t = maxV === minV ? 1 : (v - minV) / (maxV - minV);
         return 6 + t * 22;
@@ -439,13 +433,20 @@ export default function ComplaintsGeoPage() {
           .setLngLat([r.Longitude, r.Latitude])
           .addTo(mapRef.current as MLMap);
 
-        // Hover popup (aligned to RIGHT of point)
+        // hover
         const onEnter = () => {
           hoverPopupRef.current?.remove();
+
+          const siteClass =
+            (r as any).SiteClassification ??
+            (r as any).siteclassification ??
+            null;
+
           const html = `
             <div style="font-size:12px; line-height:1.25">
               <div><strong>Site:</strong> ${r.SiteName}</div>
               <div><strong>Grid:</strong> ${r.Grid ?? "—"}</div>
+              <div><strong>SiteClass:</strong> ${siteClass ?? "—"}</div>
               <div><strong>District:</strong> ${r.District ?? "—"}</div>
               <div><strong>Complaints:</strong> ${fmtN(
                 r.complaints_count
@@ -453,6 +454,7 @@ export default function ComplaintsGeoPage() {
               <div style="margin-top:6px; opacity:0.85"><em>Click marker for details</em></div>
             </div>
           `;
+
           const p = new maplibregl.Popup({
             closeButton: false,
             closeOnClick: false,
@@ -467,14 +469,16 @@ export default function ComplaintsGeoPage() {
           p.getElement().style.zIndex = "60";
           hoverPopupRef.current = p;
         };
+
         const onLeave = () => {
           hoverPopupRef.current?.remove();
           hoverPopupRef.current = null;
         };
+
         el.addEventListener("mouseenter", onEnter);
         el.addEventListener("mouseleave", onLeave);
 
-        // ✅ Click now opens center-screen dialog
+        // click opens dialog
         el.addEventListener("click", () => void handleSelectSite(r));
 
         markersRef.current.push({ siteName: r.SiteName, marker });
@@ -486,6 +490,7 @@ export default function ComplaintsGeoPage() {
   /* ---------------- Load sites + centroid zoom ---------------- */
   const loadSites = useCallback(async () => {
     try {
+      // ✅ IMPORTANT: do NOT pass dateFrom/dateTo (your RPC doesn't accept)
       const rows = await fetchSitesAgg({
         region: region ?? null,
         subregion: subRegion ?? null,
@@ -516,6 +521,7 @@ export default function ComplaintsGeoPage() {
           });
         }
       }
+
       rebuildMarkers(rows);
     } catch (e) {
       console.error("loadSites error", e);
@@ -556,7 +562,7 @@ export default function ComplaintsGeoPage() {
     });
   }, [neighbors, nbQuery, nbAddrQuery]);
 
-  /* ---------------- RIGHT-SCOPED DATA (Top 4 service charts + tables) ---------------- */
+  /* ---------------- RIGHT-SCOPED DATA (week-scoped) ---------------- */
   const loadRightScoped = useCallback(async () => {
     try {
       const argsBase = {
@@ -567,7 +573,6 @@ export default function ComplaintsGeoPage() {
       };
 
       const tsPromise = fetchTimeseriesAll(argsBase);
-
       const { dateFrom, dateTo } = buildDateRangeFromWeekWindow(weekWindow);
 
       const [tsA, svc, grd] = await Promise.all([
@@ -604,12 +609,8 @@ export default function ComplaintsGeoPage() {
     [gridCounts]
   );
 
-  /** Build 4 service-wise line series from tsAll (respecting weekWindow) */
-  type ServiceSeries = {
-    service: string;
-    points: TsAggRow[];
-    total: number;
-  };
+  /** Top 4 ServiceTitle trends (week-scoped only for the charts) */
+  type ServiceSeries = { service: string; points: TsAggRow[]; total: number };
 
   const topServiceSeries: ServiceSeries[] = useMemo(() => {
     if (!tsAll.length) return [];
@@ -660,8 +661,7 @@ export default function ComplaintsGeoPage() {
 
   /* ---------------- Tables (scroll 10 rows) ---------------- */
   const rowH = 44;
-  const visibleRows = 10;
-  const bodyMaxH = rowH * visibleRows;
+  const bodyMaxH = rowH * 10;
   const selectedName = selectedSite?.SiteName ?? null;
 
   const onRowClick = (r: SiteAggRow) => void handleSelectSite(r);
@@ -672,10 +672,21 @@ export default function ComplaintsGeoPage() {
       Address: n.Address ?? undefined,
     });
 
+  // ✅ Dialog “Total Complaints” should ignore weeks => use service badges sum if available, else fallback
+  const dialogTotalComplaints = useMemo(() => {
+    const sumBadges = badges.reduce((s, b) => s + (b.complaints_count ?? 0), 0);
+    if (sumBadges > 0) return sumBadges;
+    return selectedSite?.complaints_count ?? 0;
+  }, [badges, selectedSite]);
+
+  const dialogSiteClass = useMemo(() => {
+    const s: any = selectedSite as any;
+    return s?.SiteClassification ?? s?.siteclassification ?? null;
+  }, [selectedSite]);
+
   /* ---------------- Render ---------------- */
   return (
     <div className="p-4 space-y-4">
-      {/* Keep hover popups above surrounding layout (Dialog is separate) */}
       <style jsx global>{`
         .maplibregl-popup {
           z-index: 60 !important;
@@ -686,7 +697,6 @@ export default function ComplaintsGeoPage() {
 
       {/* TOP ROW – Filters + 4 ServiceTitle Time-series Charts */}
       <div className="space-y-3">
-        {/* Filters */}
         <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <label className="flex flex-col text-sm">
             <span className="mb-1">Region</span>
@@ -751,7 +761,6 @@ export default function ComplaintsGeoPage() {
             </select>
           </label>
 
-          {/* WEEK FILTER: Week window selector */}
           <label className="flex flex-col text-sm">
             <span className="mb-1">Weeks (charts &amp; tables)</span>
             <select
@@ -778,7 +787,6 @@ export default function ComplaintsGeoPage() {
           </div>
         </div>
 
-        {/* 4 side-by-side charts for top 4 ServiceTitles */}
         <div className="border rounded-xl shadow-sm p-3 space-y-2 bg-slate-50">
           <div className="text-sm font-medium text-slate-800 mb-1">
             Top 4 ServiceTitle complaint trends
@@ -826,9 +834,8 @@ export default function ComplaintsGeoPage() {
         </div>
       </div>
 
-      {/* MAP + RIGHT SIDEBAR (tables) */}
+      {/* MAP + RIGHT SIDEBAR */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {/* Map column spans 2 on xl */}
         <div className="xl:col-span-2">
           <div
             ref={containerRef}
@@ -837,9 +844,7 @@ export default function ComplaintsGeoPage() {
           />
         </div>
 
-        {/* Right sidebar: two tables (Service & Grid) */}
         <div className="space-y-4">
-          {/* ServiceTitle-wise counts */}
           <div className="border rounded-xl shadow-sm overflow-hidden">
             <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
               ServiceTitle — total complaints: {fmtN(totalSvcComplaints)}{" "}
@@ -879,7 +884,6 @@ export default function ComplaintsGeoPage() {
             </div>
           </div>
 
-          {/* Grid-wise counts */}
           <div className="border rounded-xl shadow-sm overflow-hidden">
             <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
               Grid — total complaints: {fmtN(totalGridComplaints)}{" "}
@@ -921,9 +925,8 @@ export default function ComplaintsGeoPage() {
         </div>
       </div>
 
-      {/* LOWER TABLES – Sites & Neighbors */}
+      {/* LOWER TABLES */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Sites Table */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
           <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium flex items-center gap-3">
             <span>{`Sites (${filteredSites.length.toLocaleString()} records)`}</span>
@@ -979,7 +982,6 @@ export default function ComplaintsGeoPage() {
           </div>
         </div>
 
-        {/* Neighbors Table */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
           <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium flex items-center gap-3">
             <span>{`Neighbors (≤ 5 km — ${filteredNeighbors.length.toLocaleString()} records)`}</span>
@@ -1008,7 +1010,6 @@ export default function ComplaintsGeoPage() {
                   <th className="text-left p-2">Address</th>
                 </tr>
               </thead>
-
               <tbody>
                 {filteredNeighbors.map((n, idx) => (
                   <tr
@@ -1048,7 +1049,7 @@ export default function ComplaintsGeoPage() {
         </div>
       </div>
 
-      {/* ✅ CENTER-SCREEN DETAILS DIALOG */}
+      {/* ✅ CENTER DIALOG (IGNORES weeks for stats) */}
       <Dialog
         open={detailsOpen}
         onOpenChange={(o) => {
@@ -1059,7 +1060,7 @@ export default function ComplaintsGeoPage() {
           }
         }}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               Site Details — {selectedSite?.SiteName ?? "—"}
@@ -1076,7 +1077,6 @@ export default function ComplaintsGeoPage() {
 
           {!detailsLoading && !detailsErr && selectedSite && (
             <div className="space-y-4">
-              {/* Top info */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                 <div>
                   <span className="font-semibold">Region:</span>{" "}
@@ -1094,17 +1094,27 @@ export default function ComplaintsGeoPage() {
                   <span className="font-semibold">Grid:</span>{" "}
                   {selectedSite.Grid ?? "—"}
                 </div>
+
+                <div>
+                  <span className="font-semibold">SiteClassification:</span>{" "}
+                  {dialogSiteClass ?? "—"}
+                </div>
+                <div />
+
                 <div className="md:col-span-2">
                   <span className="font-semibold">Address:</span>{" "}
                   {selectedSite.Address ?? "—"}
                 </div>
+
                 <div className="md:col-span-2">
                   <span className="font-semibold">Total Complaints:</span>{" "}
-                  {fmtN(selectedSite.complaints_count)}
+                  {fmtN(dialogTotalComplaints)}
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    (ignores Weeks)
+                  </span>
                 </div>
               </div>
 
-              {/* Trend chart */}
               <div className="h-[260px] rounded-lg border bg-white p-2">
                 {ts.length ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -1127,10 +1137,9 @@ export default function ComplaintsGeoPage() {
                 )}
               </div>
 
-              {/* Service badges */}
               <div className="space-y-2">
                 <div className="text-xs font-medium text-muted-foreground">
-                  Complaints by Service
+                  Complaints by Service (ignores Weeks)
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {badges.length ? (
@@ -1156,7 +1165,6 @@ export default function ComplaintsGeoPage() {
                 </div>
               </div>
 
-              {/* Neighbors quick list (click to open neighbor) */}
               <div className="space-y-2">
                 <div className="text-xs font-medium text-muted-foreground">
                   Neighbors (≤ 5 km)
@@ -1202,7 +1210,6 @@ export default function ComplaintsGeoPage() {
                           </td>
                         </tr>
                       ))}
-
                       {!neighbors.length && (
                         <tr>
                           <td className="p-2 text-muted-foreground" colSpan={3}>

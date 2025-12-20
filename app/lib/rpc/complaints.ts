@@ -9,7 +9,11 @@ export interface SiteAggRow {
   Grid: string | null;
   Latitude: number | null;
   Longitude: number | null;
-  Address: string | null; // <-- NEW
+  Address: string | null;
+
+  // ✅ ADD THIS
+  SiteClassification: string | null;
+
   complaints_count: number;
 }
 
@@ -120,6 +124,11 @@ export async function fetchGrids(
 
 /* ===================== Data ===================== */
 
+/**
+ * ✅ UPDATED:
+ * Added optional dateFrom/dateTo so map markers (complaints_count) can respect Weeks dropdown.
+ * Requires your RPC "complaints_sites_agg" to accept p_date_from, p_date_to (both nullable).
+ */
 export async function fetchSitesAgg(params: {
   region: string | null;
   subregion: string | null;
@@ -127,13 +136,16 @@ export async function fetchSitesAgg(params: {
   grid: string | null;
   limit?: number;
 }): Promise<SiteAggRow[]> {
-  const { data, error } = await supabase.rpc("complaints_sites_agg", {
+  // ✅ only the parameters that exist in DB function signature
+  const rpcArgs = {
     p_region: params.region,
     p_subregion: params.subregion,
     p_district: params.district,
     p_grid: params.grid,
     p_limit: params.limit ?? 1000,
-  });
+  };
+
+  const { data, error } = await supabase.rpc("complaints_sites_agg", rpcArgs);
   if (error) throw explainError(error);
   return (data ?? []) as SiteAggRow[];
 }
