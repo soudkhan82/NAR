@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, {
   Map as MLMap,
   Marker,
@@ -17,6 +17,7 @@ import {
   fetchDistricts,
   fetchGrids,
   fetchSitesAgg,
+  fetchSiteMeta, // ✅
   fetchTimeseries,
   fetchServiceBadges,
   fetchNeighbors,
@@ -42,7 +43,6 @@ import {
   Tooltip,
 } from "recharts";
 
-// ✅ Center-screen popup (ShadCN)
 import {
   Dialog,
   DialogContent,
@@ -51,15 +51,15 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 
-/* ================= Types (aligned with RPC outputs) ================= */
+/* ================= Types ================= */
 type SiteAggRow = RpcSiteAggRow;
 type NeighborRow = RpcNeighborRow;
 
-// WEEK FILTER: allowed week windows for charts & tables (NOT for Dialog)
+// Week window ONLY for top charts + right tables (NOT for dialog)
 type WeekWindow = "all" | "4" | "8" | "12" | "24";
 
 /* ================= Helpers ================= */
-const POPUP_WIDTH = 380; // hover-popup width
+const POPUP_WIDTH = 380;
 
 const fmtN = (n: number | null | undefined) =>
   typeof n === "number" ? n.toLocaleString() : "—";
@@ -82,18 +82,15 @@ const norm = (s: unknown) =>
 
 type MarkerRec = { siteName: string; marker: Marker };
 
-/** Threshold colors for map markers */
 const complaintsColor = (count: number | null | undefined): string => {
   const v = typeof count === "number" ? count : 0;
-  if (v > 40) return "rgba(220, 38, 38, 0.9)"; // red
-  if (v >= 20) return "rgba(249, 115, 22, 0.9)"; // orange
-  return "rgba(234, 179, 8, 0.9)"; // yellow
+  if (v > 40) return "rgba(220, 38, 38, 0.9)";
+  if (v >= 20) return "rgba(249, 115, 22, 0.9)";
+  return "rgba(234, 179, 8, 0.9)";
 };
 
-/** Distinct colors for the 4 service charts */
 const SERVICE_COLORS = ["#ef4444", "#f97316", "#22c55e", "#3b82f6"] as const;
 
-/** Build date range (yyyy-mm-dd) from selected week window for right tables/charts */
 const buildDateRangeFromWeekWindow = (
   weekWindow: WeekWindow
 ): { dateFrom: string | null; dateTo: string | null } => {
@@ -105,7 +102,7 @@ const buildDateRangeFromWeekWindow = (
   const from = new Date(today);
   from.setDate(to.getDate() - weeks * 7 + 1);
 
-  const fmt = (d: Date) => d.toISOString().slice(0, 10); // yyyy-mm-dd
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
   return { dateFrom: fmt(from), dateTo: fmt(to) };
 };
 
@@ -129,7 +126,7 @@ export default function ComplaintsGeoPage() {
   const [sites, setSites] = useState<SiteAggRow[]>([]);
   const [neighbors, setNeighbors] = useState<NeighborRow[]>([]);
 
-  /** Selection details (Dialog) */
+  /** Dialog selection details */
   const [selectedSite, setSelectedSite] = useState<SiteAggRow | null>(null);
   const [ts, setTs] = useState<TsRow[]>([]);
   const [badges, setBadges] = useState<ServiceBadgeRow[]>([]);
@@ -139,7 +136,7 @@ export default function ComplaintsGeoPage() {
   const [svcCounts, setSvcCounts] = useState<ServiceCountRow[]>([]);
   const [gridCounts, setGridCounts] = useState<GridCountRow[]>([]);
 
-  /** Center dialog state */
+  /** Dialog state */
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsErr, setDetailsErr] = useState<string | null>(null);
@@ -148,9 +145,9 @@ export default function ComplaintsGeoPage() {
   const mapRef = useRef<MLMap | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const markersRef = useRef<MarkerRec[]>([]);
-  const hoverPopupRef = useRef<Popup | null>(null); // hover popup only
+  const hoverPopupRef = useRef<Popup | null>(null);
 
-  /* ---------------- Map init (Dark basemap + zoom controls) ---------------- */
+  /* ---------------- Map init ---------------- */
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return;
 
@@ -278,7 +275,7 @@ export default function ComplaintsGeoPage() {
     };
   }, [region, subRegion, district]);
 
-  /* ---------------- Selection: recolor, zoom ---------------- */
+  /* ---------------- Selection: recolor + zoom ---------------- */
   const colorizeMarkers = useCallback(
     (selectedName: string, neighborNames: Set<string>) => {
       markersRef.current.forEach((rec) => {
@@ -286,9 +283,9 @@ export default function ComplaintsGeoPage() {
           dataset: { baseColor?: string };
         };
         if (rec.siteName === selectedName) {
-          el.style.background = "rgba(37, 99, 235, 0.9)"; // selected
+          el.style.background = "rgba(37, 99, 235, 0.9)";
         } else if (neighborNames.has(rec.siteName)) {
-          el.style.background = "rgba(220, 38, 38, 0.9)"; // neighbors
+          el.style.background = "rgba(220, 38, 38, 0.9)";
         } else {
           el.style.background = el.dataset.baseColor ?? "rgba(0,0,0,0.6)";
         }
@@ -305,10 +302,9 @@ export default function ComplaintsGeoPage() {
 
       const coords: Array<[number, number]> = [[sel.Longitude, sel.Latitude]];
       nb.forEach((n) => {
-        const lon = n.Longitude;
-        const lat = n.Latitude;
-        if (typeof lon === "number" && typeof lat === "number")
-          coords.push([lon, lat]);
+        if (typeof n.Longitude === "number" && typeof n.Latitude === "number") {
+          coords.push([n.Longitude, n.Latitude]);
+        }
       });
 
       if (coords.length > 1) {
@@ -331,23 +327,33 @@ export default function ComplaintsGeoPage() {
   /* ---------------- Center dialog select handler ---------------- */
   const handleSelectSite = useCallback(
     async (site: SiteAggRow) => {
-      setSelectedSite(site);
       setDetailsOpen(true);
       setDetailsLoading(true);
       setDetailsErr(null);
-
-      const idBig = toBigint(site.SiteName);
 
       setNeighbors([]);
       setTs([]);
       setBadges([]);
 
       try {
+        // ✅ hydrate from SSL to ensure SiteClassification always correct
+        const meta = await fetchSiteMeta(site.SiteName);
+
+        const mergedSite: SiteAggRow = {
+          ...site,
+          ...(meta ?? {}),
+          complaints_count: site.complaints_count ?? 0,
+        };
+
+        setSelectedSite(mergedSite);
+
+        const idBig = toBigint(mergedSite.SiteName);
+
         let tsData: TsRow[] = [];
         let badgesData: ServiceBadgeRow[] = [];
         let nbData: NeighborRow[] = [];
 
-        // ✅ IMPORTANT: dialog ignores weekWindow => dateFrom/dateTo ALWAYS null
+        // ✅ dialog ignores weeks => dateFrom/dateTo always null
         if (idBig) {
           [tsData, badgesData, nbData] = await Promise.all([
             fetchTimeseries(idBig, null, null),
@@ -361,14 +367,14 @@ export default function ComplaintsGeoPage() {
         setNeighbors(nbData);
 
         colorizeMarkers(
-          site.SiteName,
+          mergedSite.SiteName,
           new Set(nbData.map((n) => n.NeighborSiteName))
         );
 
         hoverPopupRef.current?.remove();
         hoverPopupRef.current = null;
 
-        fitToSelectedAndNeighbors(site, nbData);
+        fitToSelectedAndNeighbors(mergedSite, nbData);
       } catch (e) {
         console.error("handleSelectSite error", e);
         setDetailsErr("Failed to load site details.");
@@ -380,19 +386,20 @@ export default function ComplaintsGeoPage() {
   );
 
   const handleSelectByName = useCallback(
-    async (
-      siteName: string,
-      lon: number | null | undefined,
-      lat: number | null | undefined,
-      extras: Partial<SiteAggRow> = {}
-    ) => {
-      const site = {
+    async (siteName: string) => {
+      // ✅ minimal object; handleSelectSite will hydrate from SSL anyway
+      await handleSelectSite({
         SiteName: siteName,
-        Longitude: lon ?? undefined,
-        Latitude: lat ?? undefined,
-        ...extras,
-      } as SiteAggRow;
-      await handleSelectSite(site);
+        Region: null,
+        SubRegion: null,
+        District: null,
+        Grid: null,
+        Latitude: null,
+        Longitude: null,
+        Address: null,
+        SiteClassification: null,
+        complaints_count: 0,
+      });
     },
     [handleSelectSite]
   );
@@ -422,9 +429,11 @@ export default function ComplaintsGeoPage() {
         el.style.width = `${px}px`;
         el.style.height = `${px}px`;
         el.style.borderRadius = "9999px";
+
         const baseCol = complaintsColor(r.complaints_count);
         el.style.background = baseCol;
         (el as any).dataset.baseColor = baseCol;
+
         el.style.border = "2px solid #fff";
         el.style.cursor = "pointer";
         el.title = `${r.SiteName} • ${fmtN(r.complaints_count)} complaints`;
@@ -433,20 +442,16 @@ export default function ComplaintsGeoPage() {
           .setLngLat([r.Longitude, r.Latitude])
           .addTo(mapRef.current as MLMap);
 
-        // hover
         const onEnter = () => {
           hoverPopupRef.current?.remove();
-
-          const siteClass =
-            (r as any).SiteClassification ??
-            (r as any).siteclassification ??
-            null;
 
           const html = `
             <div style="font-size:12px; line-height:1.25">
               <div><strong>Site:</strong> ${r.SiteName}</div>
               <div><strong>Grid:</strong> ${r.Grid ?? "—"}</div>
-              <div><strong>SiteClass:</strong> ${siteClass ?? "—"}</div>
+              <div><strong>SiteClass:</strong> ${
+                r.SiteClassification ?? "—"
+              }</div>
               <div><strong>District:</strong> ${r.District ?? "—"}</div>
               <div><strong>Complaints:</strong> ${fmtN(
                 r.complaints_count
@@ -478,7 +483,6 @@ export default function ComplaintsGeoPage() {
         el.addEventListener("mouseenter", onEnter);
         el.addEventListener("mouseleave", onLeave);
 
-        // click opens dialog
         el.addEventListener("click", () => void handleSelectSite(r));
 
         markersRef.current.push({ siteName: r.SiteName, marker });
@@ -487,10 +491,9 @@ export default function ComplaintsGeoPage() {
     [handleSelectSite]
   );
 
-  /* ---------------- Load sites + centroid zoom ---------------- */
+  /* ---------------- Load sites ---------------- */
   const loadSites = useCallback(async () => {
     try {
-      // ✅ IMPORTANT: do NOT pass dateFrom/dateTo (your RPC doesn't accept)
       const rows = await fetchSitesAgg({
         region: region ?? null,
         subregion: subRegion ?? null,
@@ -533,7 +536,7 @@ export default function ComplaintsGeoPage() {
     void loadSites();
   }, [loadSites]);
 
-  /* ---------------- Client-side search (approx match: includes) ---------------- */
+  /* ---------------- Client-side search ---------------- */
   const [siteQuery, setSiteQuery] = useState<string>("");
   const [siteAddrQuery, setSiteAddrQuery] = useState<string>("");
 
@@ -562,7 +565,7 @@ export default function ComplaintsGeoPage() {
     });
   }, [neighbors, nbQuery, nbAddrQuery]);
 
-  /* ---------------- RIGHT-SCOPED DATA (week-scoped) ---------------- */
+  /* ---------------- Right scoped data (week-scoped only) ---------------- */
   const loadRightScoped = useCallback(async () => {
     try {
       const argsBase = {
@@ -609,7 +612,7 @@ export default function ComplaintsGeoPage() {
     [gridCounts]
   );
 
-  /** Top 4 ServiceTitle trends (week-scoped only for the charts) */
+  /* ---------------- Top 4 service trends (week scoped for charts only) ---------------- */
   type ServiceSeries = { service: string; points: TsAggRow[]; total: number };
 
   const topServiceSeries: ServiceSeries[] = useMemo(() => {
@@ -659,30 +662,22 @@ export default function ComplaintsGeoPage() {
     return series.slice(0, 4);
   }, [tsAll, weekWindow]);
 
-  /* ---------------- Tables (scroll 10 rows) ---------------- */
+  /* ---------------- Tables sizing ---------------- */
   const rowH = 44;
   const bodyMaxH = rowH * 10;
   const selectedName = selectedSite?.SiteName ?? null;
 
   const onRowClick = (r: SiteAggRow) => void handleSelectSite(r);
-  const onNeighborRowClick = (n: NeighborRow) =>
-    void handleSelectByName(n.NeighborSiteName, n.Longitude, n.Latitude, {
-      District: n.District ?? undefined,
-      Grid: n.Grid ?? undefined,
-      Address: n.Address ?? undefined,
-    });
 
-  // ✅ Dialog “Total Complaints” should ignore weeks => use service badges sum if available, else fallback
+  const onNeighborRowClick = (n: NeighborRow) =>
+    void handleSelectByName(n.NeighborSiteName);
+
+  /* ---------------- Dialog totals (ignore weeks) ---------------- */
   const dialogTotalComplaints = useMemo(() => {
     const sumBadges = badges.reduce((s, b) => s + (b.complaints_count ?? 0), 0);
     if (sumBadges > 0) return sumBadges;
     return selectedSite?.complaints_count ?? 0;
   }, [badges, selectedSite]);
-
-  const dialogSiteClass = useMemo(() => {
-    const s: any = selectedSite as any;
-    return s?.SiteClassification ?? s?.siteclassification ?? null;
-  }, [selectedSite]);
 
   /* ---------------- Render ---------------- */
   return (
@@ -787,6 +782,7 @@ export default function ComplaintsGeoPage() {
           </div>
         </div>
 
+        {/* Top 4 charts */}
         <div className="border rounded-xl shadow-sm p-3 space-y-2 bg-slate-50">
           <div className="text-sm font-medium text-slate-800 mb-1">
             Top 4 ServiceTitle complaint trends
@@ -845,6 +841,7 @@ export default function ComplaintsGeoPage() {
         </div>
 
         <div className="space-y-4">
+          {/* Service table */}
           <div className="border rounded-xl shadow-sm overflow-hidden">
             <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
               ServiceTitle — total complaints: {fmtN(totalSvcComplaints)}{" "}
@@ -884,6 +881,7 @@ export default function ComplaintsGeoPage() {
             </div>
           </div>
 
+          {/* Grid table */}
           <div className="border rounded-xl shadow-sm overflow-hidden">
             <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium">
               Grid — total complaints: {fmtN(totalGridComplaints)}{" "}
@@ -927,6 +925,7 @@ export default function ComplaintsGeoPage() {
 
       {/* LOWER TABLES */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Sites */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
           <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium flex items-center gap-3">
             <span>{`Sites (${filteredSites.length.toLocaleString()} records)`}</span>
@@ -943,6 +942,7 @@ export default function ComplaintsGeoPage() {
               onChange={(e) => setSiteAddrQuery(e.target.value)}
             />
           </div>
+
           <div className="overflow-auto" style={{ maxHeight: bodyMaxH }}>
             <table className="min-w-full text-sm">
               <thead className="sticky top-0 bg-slate-100">
@@ -951,6 +951,7 @@ export default function ComplaintsGeoPage() {
                   <th className="text-right p-2">Complaints</th>
                   <th className="text-left p-2">District</th>
                   <th className="text-left p-2">Grid</th>
+                  <th className="text-left p-2">SiteClass</th>
                   <th className="text-left p-2">SiteAddress</th>
                 </tr>
               </thead>
@@ -974,6 +975,7 @@ export default function ComplaintsGeoPage() {
                     </td>
                     <td className="p-2">{r.District ?? ""}</td>
                     <td className="p-2">{r.Grid ?? ""}</td>
+                    <td className="p-2">{r.SiteClassification ?? ""}</td>
                     <td className="p-2">{r.Address ?? ""}</td>
                   </tr>
                 ))}
@@ -982,6 +984,7 @@ export default function ComplaintsGeoPage() {
           </div>
         </div>
 
+        {/* Neighbors */}
         <div className="border rounded-xl shadow-sm overflow-hidden">
           <div className="bg-slate-800 text-white px-3 py-2 text-sm font-medium flex items-center gap-3">
             <span>{`Neighbors (≤ 5 km — ${filteredNeighbors.length.toLocaleString()} records)`}</span>
@@ -998,6 +1001,7 @@ export default function ComplaintsGeoPage() {
               onChange={(e) => setNbAddrQuery(e.target.value)}
             />
           </div>
+
           <div className="overflow-auto" style={{ maxHeight: bodyMaxH }}>
             <table className="min-w-full text-sm">
               <thead className="sticky top-0 bg-slate-100">
@@ -1013,7 +1017,7 @@ export default function ComplaintsGeoPage() {
               <tbody>
                 {filteredNeighbors.map((n, idx) => (
                   <tr
-                    key={n.NeighborSiteName ?? `${idx}`}
+                    key={`${n.NeighborSiteName ?? idx}`}
                     className="cursor-pointer hover:bg-blue-100"
                     style={{ height: rowH }}
                     onClick={() => onNeighborRowClick(n)}
@@ -1034,6 +1038,7 @@ export default function ComplaintsGeoPage() {
                     <td className="p-2">{n.Address ?? ""}</td>
                   </tr>
                 ))}
+
                 {!filteredNeighbors.length && (
                   <tr>
                     <td className="p-2 text-gray-500" colSpan={6}>
@@ -1060,7 +1065,8 @@ export default function ComplaintsGeoPage() {
           }
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        {/* scrollable + resizable vertically */}
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto resize-y">
           <DialogHeader>
             <DialogTitle>
               Site Details — {selectedSite?.SiteName ?? "—"}
@@ -1077,6 +1083,7 @@ export default function ComplaintsGeoPage() {
 
           {!detailsLoading && !detailsErr && selectedSite && (
             <div className="space-y-4">
+              {/* Top info */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                 <div>
                   <span className="font-semibold">Region:</span>{" "}
@@ -1097,7 +1104,7 @@ export default function ComplaintsGeoPage() {
 
                 <div>
                   <span className="font-semibold">SiteClassification:</span>{" "}
-                  {dialogSiteClass ?? "—"}
+                  {selectedSite.SiteClassification ?? "—"}
                 </div>
                 <div />
 
@@ -1115,6 +1122,7 @@ export default function ComplaintsGeoPage() {
                 </div>
               </div>
 
+              {/* Trend chart */}
               <div className="h-[260px] rounded-lg border bg-white p-2">
                 {ts.length ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -1137,6 +1145,7 @@ export default function ComplaintsGeoPage() {
                 )}
               </div>
 
+              {/* Service badges */}
               <div className="space-y-2">
                 <div className="text-xs font-medium text-muted-foreground">
                   Complaints by Service (ignores Weeks)
@@ -1165,6 +1174,7 @@ export default function ComplaintsGeoPage() {
                 </div>
               </div>
 
+              {/* Neighbors list (click opens neighbor in same dialog) */}
               <div className="space-y-2">
                 <div className="text-xs font-medium text-muted-foreground">
                   Neighbors (≤ 5 km)
@@ -1185,16 +1195,7 @@ export default function ComplaintsGeoPage() {
                           key={`${n.NeighborSiteName ?? "—"}-${idx}`}
                           className="cursor-pointer hover:bg-blue-50"
                           onClick={() =>
-                            void handleSelectByName(
-                              n.NeighborSiteName,
-                              n.Longitude,
-                              n.Latitude,
-                              {
-                                District: n.District ?? undefined,
-                                Grid: n.Grid ?? undefined,
-                                Address: n.Address ?? undefined,
-                              }
-                            )
+                            void handleSelectByName(n.NeighborSiteName)
                           }
                         >
                           <td className="p-2">{n.NeighborSiteName ?? "—"}</td>
@@ -1210,6 +1211,7 @@ export default function ComplaintsGeoPage() {
                           </td>
                         </tr>
                       ))}
+
                       {!neighbors.length && (
                         <tr>
                           <td className="p-2 text-muted-foreground" colSpan={3}>
