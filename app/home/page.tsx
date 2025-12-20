@@ -10,7 +10,7 @@ import { useMemo } from "react";
 const TILES = [
   {
     key: "GIS",
-    href: "/GIS/",
+    href: "/GIS",
     title: "Geospatial - Analysis",
     subtitle: "Geographical insights",
     img: "/images/avail.jpg",

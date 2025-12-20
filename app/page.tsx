@@ -9,32 +9,25 @@ import { useMemo } from "react";
 // Feel free to swap images with your own assets or CDN
 const TILES = [
   {
-    key: "availability",
-    href: "/Reports",
-    title: "Availability",
-    subtitle: "Site uptime & trends",
-    img: "/images/avail.jpg",
-  },
-  {
     key: "GIS",
-    href: "/GIS/",
+    href: "/GIS",
     title: "Geospatial - Analysis",
     subtitle: "Geographical insights",
     img: "/images/avail.jpg",
   },
   {
-    key: "RAN",
+    key: "RAN Expansion",
     href: "/RANExpansion",
     title: "RAN Expansion",
-    subtitle: "Traffic insights",
+    subtitle: "Traffic Insights insights",
     img: "/images/highU.jpg",
   },
 
   {
-    key: "eas",
-    href: "/eas",
-    title: "EAS",
-    subtitle: "Energy & power dashboard",
+    key: "RMS",
+    href: "/Rms",
+    title: "RMS",
+    subtitle: "Remote Monitoring System",
     img: "/images/eas.jpg",
   },
   {
@@ -44,7 +37,13 @@ const TILES = [
     subtitle: "Internet service KPIs",
     img: "/images/digital.jpg",
   },
-
+  {
+    key: "availability",
+    href: "/Availability",
+    title: "Availability",
+    subtitle: "Site uptime & trends",
+    img: "/images/avail.jpg",
+  },
   // NEW: ANOps tile
   {
     key: "anops",
