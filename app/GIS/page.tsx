@@ -633,7 +633,7 @@ export default function GISClient() {
             <CardContent className="p-0 h-full flex flex-col">
               <div className="px-3 py-2 border-b">
                 <div className="font-medium">
-                  Neighbour Sites within 5 km{" "}
+                  Nearest 05 Neighbour Sites{" "}
                   {selectedPoint ? `of ${selectedPoint.site_id}` : ""}{" "}
                   <span className="text-muted-foreground">
                     ({neighbourRows.length.toLocaleString()} records)
