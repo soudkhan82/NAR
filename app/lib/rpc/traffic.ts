@@ -4,7 +4,7 @@ import supabase from "@/app/config/supabase-config";
 /* ---------- Types ---------- */
 
 export type TrafficTimeseriesRow = {
-  dt: string;
+  dt: string; // YYYY-MM-DD (normalized)
   voice_2g: number | null;
   voice_3g: number | null;
   volte_voice: number | null;
@@ -28,8 +28,8 @@ export type TrafficComparisonRow = {
 export type TrafficFilterParams = {
   region?: string | null;
   subregion?: string | null;
-  district?: string | null; // UI not using now, but kept for flexibility
-  grid?: string | null; // UI not using now, but kept for flexibility
+  district?: string | null;
+  grid?: string | null;
   dateFrom?: string | null;
   dateTo?: string | null;
   oldDate?: string | null;
@@ -68,6 +68,41 @@ export type TrafficDistrictChangeRow = {
   old_total_data_gb: number | null;
   new_total_data_gb: number | null;
   pct_change_data: number | null;
+};
+
+/* ---------- Date helpers (IMPORTANT) ---------- */
+
+const toDateOnly = (dt: unknown): string | null => {
+  if (typeof dt !== "string") return null;
+  // Supports "YYYY-MM-DD" or timestamp "YYYY-MM-DDTHH:mm:ss..."
+  if (dt.length >= 10) return dt.slice(0, 10);
+  return null;
+};
+
+const clampAndNormalizeTimeseries = (
+  rows: TrafficTimeseriesRow[],
+  dateFrom: string,
+  dateTo: string
+): TrafficTimeseriesRow[] => {
+  const from = dateFrom;
+  const to = dateTo;
+
+  // 1) filter strictly within [from,to]
+  const filtered = rows
+    .map((r) => {
+      const d = toDateOnly((r as any).dt);
+      if (!d) return null;
+      return { ...r, dt: d } as TrafficTimeseriesRow;
+    })
+    .filter((r): r is TrafficTimeseriesRow => !!r)
+    .filter((r) => r.dt >= from && r.dt <= to);
+
+  // 2) dedupe by dt (keep last occurrence)
+  const byDate = new Map<string, TrafficTimeseriesRow>();
+  for (const r of filtered) byDate.set(r.dt, r);
+
+  // 3) sort by date
+  return Array.from(byDate.values()).sort((a, b) => a.dt.localeCompare(b.dt));
 };
 
 /* ---------- SSL filter RPCs (Region-dependent) ---------- */
@@ -173,7 +208,7 @@ export async function fetchTrafficTimeseries(
 
   console.log("[Traffic] fetchTrafficTimeseries params:", params);
 
-  // 0) Hard guard: no date → don't smash full 5.1M table
+  // Guard
   if (!dateFrom || !dateTo) {
     console.warn(
       "[Traffic] fetchTrafficTimeseries called without dateFrom/dateTo – returning []"
@@ -181,9 +216,12 @@ export async function fetchTrafficTimeseries(
     return [];
   }
 
-  // 1) Split the date range into smaller chunks (7 days each)
-  const ranges = splitDateRangeIntoChunks(dateFrom, dateTo, 7);
+  // If swapped, fix locally (prevents accidental full-range behavior elsewhere)
+  const from = dateFrom <= dateTo ? dateFrom : dateTo;
+  const to = dateFrom <= dateTo ? dateTo : dateFrom;
 
+  // Split into chunks
+  const ranges = splitDateRangeIntoChunks(from, to, 7);
   if (!ranges.length) {
     console.warn(
       "[Traffic] fetchTrafficTimeseries – no valid ranges produced, returning []"
@@ -193,7 +231,7 @@ export async function fetchTrafficTimeseries(
 
   const allRows: TrafficTimeseriesRow[] = [];
 
-  // 2) Call RPC sequentially per chunk
+  // Sequential RPC calls per chunk
   for (const range of ranges) {
     console.log(
       "[Traffic] fetchTrafficTimeseries chunk:",
@@ -216,9 +254,7 @@ export async function fetchTrafficTimeseries(
       console.error("[Traffic] fetchTrafficTimeseries error in chunk", {
         from: range.from,
         to: range.to,
-        // Raw object (may show as {} but useful in devtools)
         errorRaw: error,
-        // PostgREST usually has these:
         message: errAny?.message,
         details: errAny?.details,
         hint: errAny?.hint,
@@ -237,15 +273,11 @@ export async function fetchTrafficTimeseries(
     }
   }
 
-  // 3) Ensure final data is sorted by date
-  allRows.sort((a, b) => {
-    // dt comes as ISO string from Supabase
-    if (!a.dt || !b.dt) return 0;
-    return a.dt.localeCompare(b.dt);
-  });
+  // ✅ FINAL GUARANTEE: normalize + clamp + dedupe + sort
+  const finalRows = clampAndNormalizeTimeseries(allRows, from, to);
 
-  console.log("[Traffic] Timeseries rows (all chunks):", allRows.length);
-  return allRows;
+  console.log("[Traffic] Timeseries rows (after clamp):", finalRows.length);
+  return finalRows;
 }
 
 export async function fetchTrafficComparison(
@@ -261,11 +293,18 @@ export async function fetchTrafficComparison(
     return [];
   }
 
-  console.log("[Traffic] fetchTrafficComparison params:", params);
+  const from = oldDate <= newDate ? oldDate : newDate;
+  const to = oldDate <= newDate ? newDate : oldDate;
+
+  console.log("[Traffic] fetchTrafficComparison params:", {
+    ...params,
+    oldDate: from,
+    newDate: to,
+  });
 
   const { data, error } = await supabase.rpc("fetch_traffic_comparison", {
-    in_old_date: oldDate,
-    in_new_date: newDate,
+    in_old_date: from,
+    in_new_date: to,
     in_region: region ?? null,
     in_subregion: subregion ?? null,
     in_district: district ?? null,
@@ -289,16 +328,19 @@ export async function fetchTrafficGridChange(
   oldDate: string,
   newDate: string
 ): Promise<TrafficGridChangeRow[]> {
+  const from = oldDate <= newDate ? oldDate : newDate;
+  const to = oldDate <= newDate ? newDate : oldDate;
+
   console.log("[Traffic] fetchTrafficGridChange params:", {
     region,
     subregion,
-    oldDate,
-    newDate,
+    oldDate: from,
+    newDate: to,
   });
 
   const { data, error } = await supabase.rpc("fetch_traffic_grid_change", {
-    in_old_date: oldDate,
-    in_new_date: newDate,
+    in_old_date: from,
+    in_new_date: to,
     in_region: region ?? null,
     in_subregion: subregion ?? null,
   });
@@ -318,16 +360,19 @@ export async function fetchTrafficDistrictChange(
   oldDate: string,
   newDate: string
 ): Promise<TrafficDistrictChangeRow[]> {
+  const from = oldDate <= newDate ? oldDate : newDate;
+  const to = oldDate <= newDate ? newDate : oldDate;
+
   console.log("[Traffic] fetchTrafficDistrictChange params:", {
     region,
     subregion,
-    oldDate,
-    newDate,
+    oldDate: from,
+    newDate: to,
   });
 
   const { data, error } = await supabase.rpc("fetch_traffic_district_change", {
-    in_old_date: oldDate,
-    in_new_date: newDate,
+    in_old_date: from,
+    in_new_date: to,
     in_region: region ?? null,
     in_subregion: subregion ?? null,
   });
@@ -340,12 +385,12 @@ export async function fetchTrafficDistrictChange(
   console.log("[Traffic] District change rows:", data);
   return (data ?? []) as TrafficDistrictChangeRow[];
 }
-/* Small helper: split a date range into smaller chunks to avoid timeouts */
+
 /* Small helper: split a date range into smaller chunks to avoid timeouts */
 function splitDateRangeIntoChunks(
   dateFrom: string | null | undefined,
   dateTo: string | null | undefined,
-  chunkSizeDays = 7 // <= SHRUNK to 7 days to be very safe with 5.1M rows
+  chunkSizeDays = 7
 ): { from: string; to: string }[] {
   if (!dateFrom || !dateTo) return [];
 
@@ -371,7 +416,6 @@ function splitDateRangeIntoChunks(
 
     ranges.push({ from: fmt(chunkStart), to: fmt(chunkEnd) });
 
-    // next day after this chunk
     cursor = new Date(chunkEnd);
     cursor.setDate(cursor.getDate() + 1);
   }
