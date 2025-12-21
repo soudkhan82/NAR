@@ -27,7 +27,7 @@ type RmsSummaryRow = {
   ac_spd_abnormal: number | null;
 };
 
-function num(n: any) {
+function num(n: number | null | undefined) {
   const v = Number(n ?? 0);
   return Number.isFinite(v) ? v.toLocaleString() : "0";
 }
@@ -52,50 +52,39 @@ function pct(value: number, max: number) {
   return clamp((value / max) * 100);
 }
 
-/**
- * Value-proportional gradient background (per column).
- * Uses only inline style (works with Tailwind + Server Components).
- */
-function cellGradientStyle(value: number, maxValue: number) {
+function cellGradientStyle(
+  value: number,
+  maxValue: number
+): React.CSSProperties {
   const p = pct(value, maxValue);
-
-  // Feel free to tweak these two alphas if you want stronger/weaker fill.
-  const fill = `rgba(56, 189, 248, 0.35)`; // cyan-ish fill
-  const base = `rgba(255, 255, 255, 0.06)`; // subtle base
-
+  const fill = `rgba(56, 189, 248, 0.35)`;
+  const base = `rgba(255, 255, 255, 0.06)`;
   return {
     backgroundImage: `linear-gradient(90deg, ${fill} ${p}%, ${base} ${p}%)`,
-  } as React.CSSProperties;
+  };
 }
 
-function IndicatorCell({
-  subregion,
-  indicator,
-  label,
-  value,
-  maxValue,
-}: {
+function IndicatorCell(props: {
   subregion: string | null;
   indicator: string;
   label: string;
   value: number | null | undefined;
   maxValue: number;
 }) {
-  const v = Number(value ?? 0);
-  const disabled = !subregion || v <= 0;
+  const v = Number(props.value ?? 0);
+  const disabled = !props.subregion || v <= 0;
 
   const commonClass =
-    "w-full inline-flex items-center justify-end gap-2 px-2 py-1 rounded-md " +
-    "transition select-none";
+    "w-full inline-flex items-center justify-end px-2 py-1 rounded-md transition select-none";
 
-  const style = cellGradientStyle(v, maxValue);
+  const style = cellGradientStyle(v, props.maxValue);
 
   if (disabled) {
     return (
       <span
         className={`${commonClass} text-slate-200/80`}
         style={style}
-        title={label}
+        title={props.label}
       >
         {num(v)}
       </span>
@@ -104,10 +93,10 @@ function IndicatorCell({
 
   return (
     <Link
-      href={detailsHref(subregion, indicator, label)}
+      href={detailsHref(props.subregion, props.indicator, props.label)}
       className={`${commonClass} text-white hover:opacity-90 hover:ring-1 hover:ring-white/15`}
       style={style}
-      title={`View sites for ${label} in ${subregion}`}
+      title={`View sites for ${props.label} in ${props.subregion}`}
     >
       {num(v)}
     </Link>
@@ -123,7 +112,7 @@ export default async function RmsPage({
   const indicator = (searchParams?.indicator ?? "").trim();
   const label = (searchParams?.label ?? "RMS Details").trim();
 
-  // Drill-down view (same route)
+  // Drill-down view
   if (subregion && indicator) {
     return (
       <RmsDetailsView
@@ -134,11 +123,8 @@ export default async function RmsPage({
     );
   }
 
-  const { data, error } = await supabase
-    .from("v_rms_subregion_summary")
-    .select("*")
-    .order("region", { ascending: true })
-    .order("subregion", { ascending: true });
+  // ✅ Use RPC instead of view
+  const { data, error } = await supabase.rpc("fetch_rms_subregion_summary");
 
   if (error) {
     return (
@@ -153,7 +139,6 @@ export default async function RmsPage({
 
   const rows = (data ?? []) as RmsSummaryRow[];
 
-  // ---- compute per-column maxima for proportional gradients ----
   const max = {
     rms_disconnected: Math.max(
       ...rows.map((r) => Number(r.rms_disconnected_count ?? 0)),
@@ -180,7 +165,6 @@ export default async function RmsPage({
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <div className="p-6 space-y-4">
-        {/* Header */}
         <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-5">
           <h1 className="text-2xl font-semibold text-white">
             RMS Sub-Regional Summary
@@ -190,35 +174,26 @@ export default async function RmsPage({
           </p>
         </div>
 
-        {/* Table Card */}
         <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur">
-          {/* vertical scroll (~15 rows) */}
           <div className="max-h-[640px] overflow-y-auto overflow-x-auto rounded-2xl">
             <table className="min-w-[1550px] w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-900/90 text-slate-100 backdrop-blur">
                 <tr>
                   <th className="px-3 py-3 text-left">Region</th>
                   <th className="px-3 py-3 text-left">Sub Region</th>
-
                   <th className="px-3 py-3 text-right">Over All Sites</th>
                   <th className="px-3 py-3 text-right">RMS Sites</th>
-
                   <th className="px-3 py-3 text-right">RMS Disconnected</th>
-
                   <th className="px-3 py-3 text-right">IP Yes</th>
                   <th className="px-3 py-3 text-right">IP No</th>
-
                   <th className="px-3 py-3 text-right">1 Phase Missing</th>
                   <th className="px-3 py-3 text-right">2 Phase Missing</th>
-
                   <th className="px-3 py-3 text-right">
                     Battery &lt;70% (Yes)
                   </th>
-
                   <th className="px-3 py-3 text-right">Shortfall</th>
                   <th className="px-3 py-3 text-right">Critical (&lt;95%)</th>
                   <th className="px-3 py-3 text-right">Extra</th>
-
                   <th className="px-3 py-3 text-right">AC SPD Normal</th>
                   <th className="px-3 py-3 text-right">AC SPD Abnormal</th>
                 </tr>
@@ -253,7 +228,6 @@ export default async function RmsPage({
                         maxValue={max.rms_disconnected}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -263,7 +237,6 @@ export default async function RmsPage({
                         maxValue={max.ip_yes}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -273,7 +246,6 @@ export default async function RmsPage({
                         maxValue={max.ip_no}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -283,7 +255,6 @@ export default async function RmsPage({
                         maxValue={max.phase_1}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -293,7 +264,6 @@ export default async function RmsPage({
                         maxValue={max.phase_2}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -303,7 +273,6 @@ export default async function RmsPage({
                         maxValue={max.batt}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -313,7 +282,6 @@ export default async function RmsPage({
                         maxValue={max.smr_short}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -323,7 +291,6 @@ export default async function RmsPage({
                         maxValue={max.crit}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -333,7 +300,6 @@ export default async function RmsPage({
                         maxValue={max.extra}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -343,7 +309,6 @@ export default async function RmsPage({
                         maxValue={max.ac_norm}
                       />
                     </td>
-
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}

@@ -25,17 +25,13 @@ export type RmsSummaryRow = {
   ac_spd_abnormal: number;
 };
 
-export async function fetchRmsSubregionSummary() {
+export async function fetchRmsSubregionSummary(): Promise<RmsSummaryRow[]> {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  const { data, error } = await supabase
-    .from("v_rms_subregion_summary")
-    .select("*")
-    .order("region", { ascending: true })
-    .order("subregion", { ascending: true });
+  const { data, error } = await supabase.rpc("fetch_rms_subregion_summary");
 
   if (error) throw new Error(error.message);
 
