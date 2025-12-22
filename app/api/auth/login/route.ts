@@ -98,7 +98,11 @@ export async function POST(req: Request) {
     });
 
     return res;
-  } catch (e) {
-    return NextResponse.json({ error: "Bad request" }, { status: 400 });
+  } catch (e: any) {
+    console.error("LOGIN_ROUTE_ERROR:", e);
+    return NextResponse.json(
+      { error: e?.message || "Bad request" },
+      { status: 400 }
+    );
   }
 }
