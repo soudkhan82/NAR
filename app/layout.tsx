@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
-// ⬇️ add these
 import MainNav from "@/app/components/main-nav";
-import { SonnerProvider } from "@/app/components/sonner-provider"; // see below if you don't have it
+import { SonnerProvider } from "@/app/components/sonner-provider";
+import AuthShell from "@/app/components/auth-shell";
 
 export const metadata: Metadata = {
   title: "ZTrack",
@@ -17,9 +17,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <MainNav />
-        {/* Padding top to avoid content under sticky nav */}
-        <div className="pt-4">{children}</div>
+        <AuthShell>
+          {/* MainNav will be smart and hide itself on /login */}
+          <MainNav />
+          <div className="pt-4">{children}</div>
+        </AuthShell>
+
         <SonnerProvider />
       </body>
     </html>

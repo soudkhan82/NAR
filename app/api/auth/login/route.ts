@@ -1,32 +1,28 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { supabaseAdmin } from "@/app/lib/supabase/server-admin";
+import supabase from "@/app/config/supabase-config";
 
-const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "nr_session";
+const COOKIE_NAME = "nr_session";
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const username = String(body?.username || "").trim();
-    const password = String(body?.password || "");
+    const { username, password } = await req.json();
 
     if (!username || !password) {
       return NextResponse.json(
-        { error: "Username and password are required" },
+        { error: "Missing credentials" },
         { status: 400 }
       );
     }
 
-    const sb = supabaseAdmin();
-
-    const { data: user } = await sb
+    const { data: user, error } = await supabase
       .from("portal_users")
       .select("id, username, password_hash, is_active")
       .eq("username", username)
       .maybeSingle();
 
-    if (!user) {
+    if (error || !user) {
       return NextResponse.json(
         { error: "Invalid credentials" },
         { status: 401 }
@@ -34,25 +30,14 @@ export async function POST(req: Request) {
     }
 
     if (!user.is_active) {
-      return NextResponse.json({ error: "User is disabled" }, { status: 403 });
+      return NextResponse.json({ error: "User disabled" }, { status: 403 });
     }
 
-    /* =====================================================
-       PASSWORD CHECK (HYBRID MODE)
-       - If stored value looks like bcrypt → verify hash
-       - Else → treat as plain text
-       ===================================================== */
-
+    // Hybrid password check (plain OR bcrypt)
     let ok = false;
-
-    if (
-      typeof user.password_hash === "string" &&
-      user.password_hash.startsWith("$2")
-    ) {
-      // bcrypt hash
+    if (user.password_hash.startsWith("$2")) {
       ok = bcrypt.compareSync(password, user.password_hash);
     } else {
-      // plain-text password
       ok = password === user.password_hash;
     }
 
@@ -63,46 +48,21 @@ export async function POST(req: Request) {
       );
     }
 
-    /* =====================================================
-       CREATE SESSION
-       ===================================================== */
+    // Create simple session token
+    const token = crypto.randomBytes(32).toString("hex");
 
-    const sessionToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const res = NextResponse.json({ ok: true });
 
-    const { error: sErr } = await sb.from("portal_sessions").insert({
-      user_id: user.id,
-      session_token: sessionToken,
-      expires_at: expiresAt.toISOString(),
-      revoked_at: null,
-    });
-
-    if (sErr) {
-      return NextResponse.json(
-        { error: "Failed to create session" },
-        { status: 500 }
-      );
-    }
-
-    const res = NextResponse.json({
-      ok: true,
-      user: { id: user.id, username: user.username },
-    });
-
-    res.cookies.set(COOKIE_NAME, sessionToken, {
+    res.cookies.set(COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
       path: "/",
-      maxAge: 7 * 24 * 60 * 60,
+      maxAge: 60 * 60 * 24, // 1 day
     });
 
     return res;
-  } catch (e: any) {
-    console.error("LOGIN_ROUTE_ERROR:", e);
-    return NextResponse.json(
-      { error: e?.message || "Bad request" },
-      { status: 400 }
-    );
+  } catch (e) {
+    return NextResponse.json({ error: "Login failed" }, { status: 500 });
   }
 }

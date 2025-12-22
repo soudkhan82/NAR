@@ -4,7 +4,6 @@ import Link from "next/link";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { useMemo } from "react";
-import Navbar from "@/app/components/main-nav";
 
 // Tiles config
 const TILES = [
@@ -77,6 +76,7 @@ const TILES = [
     title: "LPA",
     subtitle: "Power alarms & aging",
     img: "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=1600&auto=format&fit=crop",
+    external: true,
   },
 ] as const;
 
@@ -85,8 +85,6 @@ export default function HomeLanding() {
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
-      {/* Navbar */}
-
       {/* Header */}
       <section className="mx-auto max-w-7xl px-6 pt-14 pb-10">
         <motion.h1
@@ -125,9 +123,15 @@ export default function HomeLanding() {
                     src={tile.img}
                     alt={tile.title}
                     fill
-                    className="object-cover transition-transform duration-500 group-hover:scale-105"
+                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    priority={i < 3}
+                    className="object-cover object-center transition-transform duration-500 group-hover:scale-105"
+                    // KEY FIX: bypass optimizer (prevents /_next/image 400)
+                    unoptimized={!("external" in tile && tile.external)}
                   />
+
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/40 to-transparent" />
+
                   <div className="absolute inset-0 p-5 flex flex-col justify-end">
                     <h3 className="text-lg sm:text-xl font-semibold">
                       {tile.title}

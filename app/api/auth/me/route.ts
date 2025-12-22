@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
-import { getAuthedUser } from "@/app/lib/auth/server";
 
-export async function GET() {
-  const user = await getAuthedUser();
-  return NextResponse.json({
-    user: user ? { id: user.id, username: user.username } : null,
-  });
+const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "nr_session";
+
+export async function GET(req: Request) {
+  const cookie = req.headers.get("cookie") || "";
+  const hasSession = cookie.split(";").some((c) => c.trim().startsWith(`${COOKIE_NAME}=`));
+
+  if (!hasSession) {
+    return NextResponse.json({ authed: false }, { status: 401 });
+  }
+
+  // simplest mode: cookie existence = authed
+  return NextResponse.json({ authed: true }, { status: 200 });
 }
