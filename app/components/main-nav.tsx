@@ -36,7 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/isp", label: "ISP", gradient: "from-lime-400 to-green-500" },
   { href: "/Rms", label: "RMS", gradient: "from-red-400 to-rose-500" },
   {
-    href: "/KPI/DG",
+    href: "/DG",
     label: "DG KPI",
     gradient: "from-violet-400 to-fuchsia-500",
   },
