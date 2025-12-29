@@ -1,45 +1,50 @@
-// app/lib/rpc/dg_kpi.ts
 import supabase from "@/app/config/supabase-config";
 
-/* -------------------- Types -------------------- */
-
-export type FuelStatus =
-  | "No Fueling"
-  | "Target Achieved"
-  | "Below Base"
-  | "Between Base & Target";
+// --- Types ---
 
 export type SummaryFiltered = {
   distinct_engines: number;
-  avg_fuel: number | null;
+  total_fuel: number;
+  valid_fueling_entries: number; // For accurate Average calculation
   target_achieved: number;
+  base_achieved: number;
   below_base: number;
   no_fueling: number;
 };
 
 export type BreakdownFilteredRow = {
-  region: string | null;
-  subregion: string | null;
-  distinct_engines: number;
-  no_fueling: number;
+  Region: string;
+  SubRegion: string;
   target_achieved: number;
+  base_achieved: number;
   below_base: number;
+  no_fueling: number;
+  total_count: number;
 };
 
-export type FilterParams = {
-  region?: string | null;
-  subRegion?: string | null;
-  month?: string | null;
-};
+// --- Fetching Functions ---
 
-/* -------------------- RPC: Dropdowns -------------------- */
+/**
+ * Fetches the minimum and maximum month available in the dataset
+ */
+export async function fetchDateBounds() {
+  const { data, error } = await supabase.rpc("fetch_dg_date_bounds");
+  if (error) throw error;
+  return data?.[0] as { min_date: string; max_date: string } | null;
+}
 
+/**
+ * Fetches a list of all unique regions
+ */
 export async function fetchRegions(): Promise<{ region: string }[]> {
   const { data, error } = await supabase.rpc("fetch_dg_regions");
   if (error) throw error;
   return (data ?? []) as { region: string }[];
 }
 
+/**
+ * Fetches unique subregions, optionally filtered by region
+ */
 export async function fetchSubRegions(
   region: string | null
 ): Promise<{ subregion: string }[]> {
@@ -50,60 +55,64 @@ export async function fetchSubRegions(
   return (data ?? []) as { subregion: string }[];
 }
 
-export async function fetchMonths(params: {
-  region?: string | null;
-  subRegion?: string | null;
-}): Promise<{ month: string }[]> {
-  const { data, error } = await supabase.rpc("fetch_dg_months", {
-    p_region: params.region ?? null,
-    p_subregion: params.subRegion ?? null,
-  });
-  if (error) throw error;
-  return (data ?? []) as { month: string }[];
-}
-
-/* -------------------- RPC: Aggregates (NO 1000 LIMIT) -------------------- */
-
-export async function fetchSummaryFiltered(params: FilterParams) {
+/**
+ * Fetches aggregated summary data for the top KPI cards
+ */
+export async function fetchSummaryFiltered(params: {
+  region: string | null;
+  subRegion: string | null;
+  startDate: string | null;
+  endDate: string | null;
+}): Promise<SummaryFiltered> {
   const { data, error } = await supabase.rpc("fetch_dg_kpi_summary_filtered", {
-    p_region: params.region ?? null,
-    p_subregion: params.subRegion ?? null,
-    p_month: params.month ?? null,
+    p_region: params.region,
+    p_subregion: params.subRegion,
+    p_start_date: params.startDate,
+    p_end_date: params.endDate,
   });
 
   if (error) throw error;
+  const r = data?.[0];
 
-  const row = (data?.[0] ?? null) as any;
   return {
-    distinct_engines: Number(row?.distinct_engines ?? 0),
-    avg_fuel:
-      row?.avg_fuel === null || row?.avg_fuel === undefined
-        ? null
-        : Number(row.avg_fuel),
-    target_achieved: Number(row?.target_achieved ?? 0),
-    below_base: Number(row?.below_base ?? 0),
-    no_fueling: Number(row?.no_fueling ?? 0),
-  } as SummaryFiltered;
+    distinct_engines: Number(r?.distinct_engines ?? 0),
+    total_fuel: Number(r?.total_fuel ?? 0),
+    valid_fueling_entries: Number(r?.valid_fueling_entries ?? 0),
+    target_achieved: Number(r?.target_achieved ?? 0),
+    base_achieved: Number(r?.base_achieved ?? 0),
+    below_base: Number(r?.below_base ?? 0),
+    no_fueling: Number(r?.no_fueling ?? 0),
+  };
 }
 
-export async function fetchBreakdownFiltered(params: FilterParams) {
+/**
+ * Fetches breakdown data per sub-region for charts and tables
+ */
+export async function fetchBreakdownFiltered(params: {
+  region: string | null;
+  subRegion: string | null;
+  startDate: string | null;
+  endDate: string | null;
+}): Promise<BreakdownFilteredRow[]> {
   const { data, error } = await supabase.rpc(
     "fetch_dg_status_breakdown_filtered",
     {
-      p_region: params.region ?? null,
-      p_subregion: params.subRegion ?? null,
-      p_month: params.month ?? null,
+      p_region: params.region,
+      p_subregion: params.subRegion,
+      p_start_date: params.startDate,
+      p_end_date: params.endDate,
     }
   );
 
   if (error) throw error;
 
   return (data ?? []).map((r: any) => ({
-    region: r.region ?? null,
-    subregion: r.subregion ?? null,
-    distinct_engines: Number(r.distinct_engines ?? 0),
-    no_fueling: Number(r.no_fueling ?? 0),
+    Region: r.region ?? "Unknown",
+    SubRegion: r.subregion ?? "Unknown",
     target_achieved: Number(r.target_achieved ?? 0),
+    base_achieved: Number(r.base_achieved ?? 0),
     below_base: Number(r.below_base ?? 0),
-  })) as BreakdownFilteredRow[];
+    no_fueling: Number(r.no_fueling ?? 0),
+    total_count: Number(r.total_count ?? 0),
+  }));
 }

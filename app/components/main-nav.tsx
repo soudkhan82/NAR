@@ -3,9 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { toast } from "sonner";
+import { Search, LogOut, ChevronDown, ArrowRight, User } from "lucide-react";
 
 type NavItem = {
   href: string;
@@ -35,10 +34,11 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/Lpa", label: "LPA", gradient: "from-fuchsia-400 to-purple-500" },
   { href: "/isp", label: "ISP", gradient: "from-lime-400 to-green-500" },
   { href: "/Rms", label: "RMS", gradient: "from-red-400 to-rose-500" },
+  { href: "/DG", label: "DG KPI", gradient: "from-violet-400 to-fuchsia-500" },
   {
-    href: "/DG",
-    label: "DG KPI",
-    gradient: "from-violet-400 to-fuchsia-500",
+    href: "/cpunits",
+    label: "CP Units",
+    gradient: "from-blue-500 to-indigo-600",
   },
 ];
 
@@ -46,397 +46,261 @@ export default function MainNav() {
   const pathname = usePathname();
   const router = useRouter();
 
-  const [open, setOpen] = useState(false); // mobile
-  const [menuOpen, setMenuOpen] = useState(false); // account
+  // UI States
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [authed, setAuthed] = useState(false);
-
-  // command palette
-  const [cmdOpen, setCmdOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // for portal safety in Next.js
-  const [mounted, setMounted] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const accountRef = useRef<HTMLDivElement>(null);
 
-  const hideNav = pathname === "/login";
-
-  useEffect(() => setMounted(true), []);
-
+  // Auth Check
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch("/api/auth/me", { cache: "no-store" });
-        if (!alive) return;
-        setAuthed(r.ok);
-      } catch {
-        if (!alive) return;
-        setAuthed(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+    fetch("/api/auth/me")
+      .then((r) => setAuthed(r.ok))
+      .catch(() => setAuthed(false));
   }, [pathname]);
 
-  // keyboard shortcuts: "/" open, Esc close
+  // Keyboard shortcut listener
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const el = e.target as HTMLElement | null;
-      const tag = el?.tagName?.toLowerCase();
-      const typing =
-        tag === "input" || tag === "textarea" || el?.isContentEditable;
-
-      if (e.key === "/" && !typing && !cmdOpen) {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "/" && !isSearchOpen) {
         e.preventDefault();
-        setCmdOpen(true);
-        return;
+        setIsSearchOpen(true);
       }
-
       if (e.key === "Escape") {
-        setCmdOpen(false);
-        setQuery("");
-        setMenuOpen(false);
-        setOpen(false);
+        setIsSearchOpen(false);
+        setAccountMenuOpen(false);
       }
-    }
-
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [cmdOpen]);
-
-  useEffect(() => {
-    if (!cmdOpen) return;
-    requestAnimationFrame(() => inputRef.current?.focus());
-  }, [cmdOpen]);
-
-  useEffect(() => {
-    if (!cmdOpen) return;
-
-    // prevent background scrolling when palette is open
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
     };
-  }, [cmdOpen]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSearchOpen]);
 
-  async function handleLogout() {
-    setMenuOpen(false);
-    setOpen(false);
-    setCmdOpen(false);
-    setQuery("");
+  // Click outside to close Account Menu
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        accountRef.current &&
+        !accountRef.current.contains(e.target as Node)
+      ) {
+        setAccountMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-      toast.success("Logged out");
-    } catch {
-      toast.error("Logout failed");
-    } finally {
-      router.replace("/login");
-    }
-  }
+  // Focus search input
+  useEffect(() => {
+    if (isSearchOpen) setTimeout(() => inputRef.current?.focus(), 50);
+  }, [isSearchOpen]);
 
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return NAV_ITEMS;
-    return NAV_ITEMS.filter((x) => x.label.toLowerCase().includes(q));
+  const filteredItems = useMemo(() => {
+    return NAV_ITEMS.filter((item) =>
+      item.label.toLowerCase().includes(query.toLowerCase())
+    );
   }, [query]);
 
-  const onNavigate = (href: string) => {
-    router.push(href);
-    setCmdOpen(false);
-    setQuery("");
-    setOpen(false);
-    setMenuOpen(false);
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.replace("/login");
   };
 
-  if (hideNav) return null;
+  if (pathname === "/login") return null;
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-white/10 bg-slate-950/80 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
-        {/* Desktop nav (equal spacing) */}
-        <nav className="hidden md:grid grid-flow-col auto-cols-fr gap-2 flex-1">
-          {NAV_ITEMS.map((item) => {
-            const active = pathname === item.href;
-            return (
-              <Link key={item.href} href={item.href} className="relative group">
-                <div className="relative z-10 flex justify-center rounded-xl px-3 py-2 text-sm font-medium text-slate-200 group-hover:text-white transition">
+    <>
+      <header className="sticky top-0 z-40 w-full bg-slate-950/80 backdrop-blur-md border-b border-white/5 font-sans">
+        <div className="relative mx-auto flex h-16 max-w-[1800px] items-center justify-between px-4 lg:px-10">
+          {/* Logo */}
+          <div className="flex-shrink-0 mr-8">
+            <Link
+              href="/"
+              className="text-white font-black tracking-tighter text-xl hover:opacity-80 transition"
+            >
+              KPI<span className="text-blue-500">.</span>
+            </Link>
+          </div>
+
+          {/* Navigation Items */}
+          <nav className="hidden xl:flex items-center gap-1">
+            {NAV_ITEMS.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="relative px-3 py-2 group"
+              >
+                <span
+                  className={cn(
+                    "relative z-10 text-[13px] font-bold transition-colors duration-200",
+                    pathname === item.href
+                      ? "text-white"
+                      : "text-slate-400 group-hover:text-slate-100"
+                  )}
+                >
                   {item.label}
-                </div>
-
-                <div
-                  className={`absolute inset-0 rounded-xl bg-gradient-to-r ${item.gradient} opacity-0 group-hover:opacity-20 transition`}
-                />
-
-                {active && (
+                </span>
+                {pathname === item.href && (
                   <motion.div
-                    layoutId="active-nav-pill"
-                    className={`absolute inset-0 rounded-xl bg-gradient-to-r ${item.gradient} opacity-30`}
-                    transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                    layoutId="active-pill"
+                    className={cn(
+                      "absolute inset-0 rounded-xl bg-gradient-to-r opacity-20",
+                      item.gradient
+                    )}
                   />
                 )}
               </Link>
-            );
-          })}
-        </nav>
+            ))}
+          </nav>
 
-        {/* Right actions */}
-        <div className="flex items-center gap-2">
-          {/* Search button */}
-          <button
-            onClick={() => setCmdOpen(true)}
-            className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10 transition"
-            title="Search navigation (Press /)"
-          >
-            <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 opacity-90">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M21 21l-4.3-4.3m1.8-5.2a7 7 0 11-14 0 7 7 0 0114 0z"
-                  stroke="white"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </span>
-            <span className="text-white/90">Search</span>
-            <span className="ml-1 rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] text-white/70">
-              /
-            </span>
-          </button>
+          <div className="flex items-center gap-3 ml-8">
+            {/* SEARCH TRIGGER */}
+            <button
+              onClick={() => setIsSearchOpen(true)}
+              className="hidden lg:flex items-center gap-8 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold hover:bg-white/10 transition-all text-slate-400 group"
+            >
+              <div className="flex items-center gap-3">
+                <Search className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition-colors" />
+                <span>Search...</span>
+              </div>
+              <span className="bg-slate-900 border border-white/10 px-1.5 py-0.5 rounded text-[10px] opacity-50">
+                /
+              </span>
+            </button>
 
-          {/* Account dropdown */}
-          {authed && (
-            <div className="hidden md:block relative">
-              <button
-                onClick={() => setMenuOpen((v) => !v)}
-                className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm border border-white/15 bg-white/5 text-white hover:bg-white/10 transition"
-              >
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.5)]" />
-                <span>Account</span>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M6 9l6 6 6-6"
-                    stroke="currentColor"
-                    strokeWidth="2"
+            {/* ACCOUNT MENU */}
+            {authed && (
+              <div className="relative" ref={accountRef}>
+                <button
+                  onClick={() => setAccountMenuOpen(!accountMenuOpen)}
+                  className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/5 pl-3 pr-2 py-2 text-xs font-bold text-white hover:bg-white/10 transition-all"
+                >
+                  <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                  <span>Account</span>
+                  <ChevronDown
+                    className={cn(
+                      "w-3.5 h-3.5 text-slate-500 transition-transform duration-300",
+                      accountMenuOpen && "rotate-180"
+                    )}
                   />
-                </svg>
-              </button>
+                </button>
 
-              <AnimatePresence>
-                {menuOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                    className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border border-white/10 bg-slate-950/95 backdrop-blur shadow-xl"
-                  >
-                    <div className="px-4 py-3 text-xs text-slate-300 border-b border-white/10">
-                      Session active
-                    </div>
-
-                    <button
-                      onClick={handleLogout}
-                      className="w-full px-4 py-3 text-left text-sm text-white hover:bg-fuchsia-500/10 transition flex items-center gap-2"
+                <AnimatePresence>
+                  {accountMenuOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute right-0 mt-2 w-48 overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-2xl z-50 p-1"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={2}
+                      <div className="h-[1px] bg-white/5 my-1 mx-2" />
+                      <button
+                        onClick={handleLogout}
+                        className="flex w-full items-center justify-between px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-rose-500/10 transition-colors rounded-xl"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a2 2 0 01-2 2H7a2 2 0 01-2-2V7a2 2 0 012-2h4a2 2 0 012 2v1"
-                        />
-                      </svg>
-                      Logout
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
-
-          {/* Mobile icons */}
-          <button
-            onClick={() => setCmdOpen(true)}
-            className="md:hidden inline-flex items-center justify-center rounded-md p-2 text-slate-200 hover:bg-white/10 transition"
-            aria-label="Search navigation"
-            title="Search"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M21 21l-4.3-4.3m1.8-5.2a7 7 0 11-14 0 7 7 0 0114 0z"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="md:hidden inline-flex items-center justify-center rounded-md p-2 text-slate-200 hover:bg-white/10 transition"
-            aria-label="Toggle Menu"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M3 6h18M3 12h18M3 18h18"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+                        Logout <LogOut className="w-4 h-4" />
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      </header>
 
-      {/* Mobile sheet */}
+      {/* SEARCH COMMAND PALETTE */}
       <AnimatePresence>
-        {open && (
-          <motion.nav
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="md:hidden overflow-hidden border-t border-white/10 bg-slate-950"
-          >
-            <ul className="grid grid-cols-2 gap-2 px-4 py-4">
-              {NAV_ITEMS.map((item) => {
-                const active = pathname === item.href;
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      onClick={() => setOpen(false)}
-                      className={`block rounded-lg px-3 py-2 text-sm text-center text-white bg-gradient-to-r ${
-                        item.gradient
-                      } ${
-                        active ? "opacity-100" : "opacity-80 hover:opacity-100"
-                      } transition`}
-                    >
-                      {item.label}
-                    </Link>
-                  </li>
-                );
-              })}
+        {isSearchOpen && (
+          <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[12vh]">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSearchOpen(false)}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            />
 
-              {authed && (
-                <li className="col-span-2 mt-2">
-                  <button
-                    onClick={handleLogout}
-                    className="w-full rounded-lg px-3 py-2 text-sm text-white border border-white/15 bg-white/5 hover:bg-fuchsia-500/10 transition"
-                  >
-                    Logout
-                  </button>
-                </li>
-              )}
-            </ul>
-          </motion.nav>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97, y: -10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: -10 }}
+              className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-[#0b0f1a] shadow-[0_0_50px_-12px_rgba(0,0,0,0.5)]"
+            >
+              {/* Search Box */}
+              <div className="flex items-center border-b border-white/5 px-4 py-4 bg-slate-900/20">
+                <Search className="mr-3 h-5 w-5 text-slate-500" />
+                <input
+                  ref={inputRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search modules..."
+                  className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-600"
+                />
+                <kbd className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-bold text-slate-500 uppercase">
+                  Esc
+                </kbd>
+              </div>
+
+              {/* Scrollable Results List */}
+              <div className="max-h-[360px] overflow-y-auto p-2 custom-scrollbar">
+                {filteredItems.length > 0 ? (
+                  <div className="space-y-0.5">
+                    {filteredItems.map((item) => (
+                      <button
+                        key={item.href}
+                        onClick={() => {
+                          router.push(item.href);
+                          setIsSearchOpen(false);
+                          setQuery("");
+                        }}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[13px] font-bold text-slate-300 hover:bg-white/5 hover:text-white transition-all group"
+                      >
+                        <div
+                          className={cn(
+                            "h-2.5 w-2.5 rounded-full bg-gradient-to-r",
+                            item.gradient
+                          )}
+                        />
+                        {item.label}
+                        <ArrowRight className="ml-auto h-3 w-3 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all text-blue-500" />
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-10 text-center text-xs text-slate-600 font-medium">
+                    No results found for "{query}"
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center border-t border-white/5 bg-slate-950/50 px-4 py-2.5">
+                <p className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">
+                  Press <span className="text-slate-400">Enter</span> to select
+                </p>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
-      {/* Command palette rendered in a PORTAL to guarantee foreground */}
-      {mounted &&
-        createPortal(
-          <AnimatePresence>
-            {cmdOpen && (
-              <>
-                {/* Backdrop (very high z-index) */}
-                <motion.div
-                  className="fixed inset-0 bg-black/55"
-                  style={{ zIndex: 2147483646 }}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() => {
-                    setCmdOpen(false);
-                    setQuery("");
-                  }}
-                />
-
-                {/* Panel */}
-                <motion.div
-                  initial={{ opacity: 0, y: -18, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -18, scale: 0.98 }}
-                  transition={{ type: "spring", stiffness: 260, damping: 22 }}
-                  className="fixed left-1/2 top-20 w-[92%] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 bg-slate-950/95 backdrop-blur shadow-2xl"
-                  style={{ zIndex: 2147483647 }}
-                  role="dialog"
-                  aria-modal="true"
-                  aria-label="Search navigation"
-                >
-                  <div className="border-b border-white/10 px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-white/10">
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                        >
-                          <path
-                            d="M21 21l-4.3-4.3m1.8-5.2a7 7 0 11-14 0 7 7 0 0114 0z"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                      </span>
-
-                      <input
-                        ref={inputRef}
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search modules… (e.g. GIS, Traffic, RMS)"
-                        className="w-full bg-transparent text-sm text-white placeholder:text-slate-400 outline-none"
-                      />
-
-                      <span className="rounded-md bg-white/10 px-2 py-1 text-[10px] text-white/70">
-                        Esc
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="max-h-[360px] overflow-y-auto py-1">
-                    {results.length === 0 ? (
-                      <div className="px-4 py-8 text-center text-sm text-slate-400">
-                        No results
-                      </div>
-                    ) : (
-                      results.map((item) => (
-                        <button
-                          key={item.href}
-                          onClick={() => onNavigate(item.href)}
-                          className="group flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition"
-                        >
-                          <span
-                            className={`h-2.5 w-2.5 rounded-full bg-gradient-to-r ${item.gradient}`}
-                          />
-                          <span className="text-sm text-white/90 group-hover:text-white">
-                            {item.label}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-
-                  <div className="border-t border-white/10 px-4 py-2 text-xs text-slate-400">
-                    Tip: Press{" "}
-                    <span className="rounded bg-white/10 px-1">/</span> to open
-                    search
-                  </div>
-                </motion.div>
-              </>
-            )}
-          </AnimatePresence>,
-          document.body
-        )}
-    </header>
+      {/* Global Scrollbar Styles */}
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 5px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #1e293b;
+          border-radius: 10px;
+        }
+      `}</style>
+    </>
   );
+}
+
+function cn(...classes: any[]) {
+  return classes.filter(Boolean).join(" ");
 }
