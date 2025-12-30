@@ -27,8 +27,8 @@ const NAV_ITEMS: NavItem[] = [
     gradient: "from-rose-400 to-pink-500",
   },
   {
-    href: "/Reports",
-    label: "Auto-Reports",
+    href: "/franchise",
+    label: "Franchise",
     gradient: "from-indigo-400 to-violet-500",
   },
   {
