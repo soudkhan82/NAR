@@ -4,7 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, LogOut, ChevronDown, ArrowRight, User } from "lucide-react";
+import {
+  Search,
+  LogOut,
+  ChevronDown,
+  ArrowRight,
+  CalendarDays,
+} from "lucide-react";
 
 type NavItem = {
   href: string;
@@ -55,7 +61,7 @@ export default function MainNav() {
   const inputRef = useRef<HTMLInputElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
 
-  // Auth Check
+  // Simple Auth Check
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => setAuthed(r.ok))
@@ -78,7 +84,7 @@ export default function MainNav() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isSearchOpen]);
 
-  // Click outside to close Account Menu
+  // Click outside listener
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -114,7 +120,6 @@ export default function MainNav() {
     <>
       <header className="sticky top-0 z-40 w-full bg-slate-950/80 backdrop-blur-md border-b border-white/5 font-sans">
         <div className="relative mx-auto flex h-16 max-w-[1800px] items-center justify-between px-4 lg:px-10">
-          {/* Logo */}
           <div className="flex-shrink-0 mr-8">
             <Link
               href="/"
@@ -124,7 +129,6 @@ export default function MainNav() {
             </Link>
           </div>
 
-          {/* Navigation Items */}
           <nav className="hidden xl:flex items-center gap-1">
             {NAV_ITEMS.map((item) => (
               <Link
@@ -170,15 +174,15 @@ export default function MainNav() {
               </span>
             </button>
 
-            {/* ACCOUNT MENU */}
+            {/* SIMPLE ACCOUNT MENU */}
             {authed && (
               <div className="relative" ref={accountRef}>
                 <button
                   onClick={() => setAccountMenuOpen(!accountMenuOpen)}
-                  className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/5 pl-3 pr-2 py-2 text-xs font-bold text-white hover:bg-white/10 transition-all"
+                  className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/5 pl-3 pr-2 py-2 text-xs font-bold text-white hover:bg-white/10 transition-all shadow-lg"
                 >
                   <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                  <span>Account</span>
+                  <span className="uppercase tracking-wider">Account</span>
                   <ChevronDown
                     className={cn(
                       "w-3.5 h-3.5 text-slate-500 transition-transform duration-300",
@@ -193,14 +197,14 @@ export default function MainNav() {
                       initial={{ opacity: 0, y: 10, scale: 0.95 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      className="absolute right-0 mt-2 w-48 overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-2xl z-50 p-1"
+                      className="absolute right-0 mt-2 w-40 overflow-hidden rounded-2xl border border-white/10 bg-[#0f172a] shadow-2xl z-50 p-1"
                     >
-                      <div className="h-[1px] bg-white/5 my-1 mx-2" />
                       <button
                         onClick={handleLogout}
-                        className="flex w-full items-center justify-between px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-rose-500/10 transition-colors rounded-xl"
+                        className="flex w-full items-center justify-between px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-rose-500/10 transition-colors rounded-xl group"
                       >
-                        Logout <LogOut className="w-4 h-4" />
+                        Logout
+                        <LogOut className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                       </button>
                     </motion.div>
                   )}
@@ -222,14 +226,12 @@ export default function MainNav() {
               onClick={() => setIsSearchOpen(false)}
               className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
             />
-
             <motion.div
               initial={{ opacity: 0, scale: 0.97, y: -10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.97, y: -10 }}
-              className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-[#0b0f1a] shadow-[0_0_50px_-12px_rgba(0,0,0,0.5)]"
+              className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-[#0b0f1a] shadow-2xl"
             >
-              {/* Search Box */}
               <div className="flex items-center border-b border-white/5 px-4 py-4 bg-slate-900/20">
                 <Search className="mr-3 h-5 w-5 text-slate-500" />
                 <input
@@ -243,8 +245,6 @@ export default function MainNav() {
                   Esc
                 </kbd>
               </div>
-
-              {/* Scrollable Results List */}
               <div className="max-h-[360px] overflow-y-auto p-2 custom-scrollbar">
                 {filteredItems.length > 0 ? (
                   <div className="space-y-0.5">
@@ -275,8 +275,6 @@ export default function MainNav() {
                   </div>
                 )}
               </div>
-
-              {/* Modal Footer */}
               <div className="flex items-center border-t border-white/5 bg-slate-950/50 px-4 py-2.5">
                 <p className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">
                   Press <span className="text-slate-400">Enter</span> to select
@@ -287,7 +285,6 @@ export default function MainNav() {
         )}
       </AnimatePresence>
 
-      {/* Global Scrollbar Styles */}
       <style jsx global>{`
         .custom-scrollbar::-webkit-scrollbar {
           width: 5px;

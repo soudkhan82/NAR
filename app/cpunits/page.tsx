@@ -1,4 +1,3 @@
-// app/CPUnits/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -31,6 +30,10 @@ type CpUnitsSummaryRow = {
   sum_kwh: number | null;
   avg_base: number | null;
   avg_target: number | null;
+
+  // ✅ score comes from RPC (avg(score) per region/subregion)
+  avg_score: number | null;
+
   target_achieved: number;
   base_achieved: number;
   target_and_base_not_achieved: number;
@@ -41,7 +44,7 @@ type RegionRow = { region: string };
 type SubregionRow = { subregion: string };
 type MonthRow = { month: string };
 
-/* Recharts label props (percent comes as unknown in TS) */
+/* Recharts label props */
 type PieLabelProps = {
   name?: string;
   percent?: unknown;
@@ -96,9 +99,9 @@ async function fetchSummary(params: {
   month?: string | null;
 }): Promise<CpUnitsSummaryRow[]> {
   const { data, error } = await supabase.rpc("fetch_cp_units_summary", {
+    p_month: params.month ?? null, // month first
     p_region: params.region ?? null,
     p_subregion: params.subregion ?? null,
-    p_month: params.month ?? null,
   });
   if (error) throw error;
   return (data ?? []) as CpUnitsSummaryRow[];
@@ -180,6 +183,7 @@ export default function CpUnitsDashboardPage() {
     })();
   }, [region, subregion, month]);
 
+  // Totals + weighted avg score (keeps your existing values, no changes)
   const totals = useMemo(() => {
     let sites = 0;
     let sumKwh = 0;
@@ -189,7 +193,14 @@ export default function CpUnitsDashboardPage() {
     let notAch = 0;
     let zero = 0;
 
+    // weighted score
+    let scoreWeightedSum = 0;
+    let scoreWeight = 0;
+
     for (const r of rows) {
+      const sc = r.avg_score;
+      const w = safeNum(r.site_count);
+
       sites += safeNum(r.site_count);
       sumKwh += safeNum(r.sum_kwh);
 
@@ -197,9 +208,41 @@ export default function CpUnitsDashboardPage() {
       baseAch += safeNum(r.base_achieved);
       notAch += safeNum(r.target_and_base_not_achieved);
       zero += safeNum(r.zero_or_null_kwh);
+
+      if (sc !== null && w > 0) {
+        scoreWeightedSum += safeNum(sc) * w;
+        scoreWeight += w;
+      }
     }
 
-    return { sites, sumKwh, targetAch, baseAch, notAch, zero };
+    const avgScore = scoreWeight > 0 ? scoreWeightedSum / scoreWeight : null;
+
+    // score bands (Option A) — for display only
+    // We infer bands based on avg_score per group (not per row/site)
+    // This preserves your values and adds extra insight.
+    let bandHigh = 0; // >= 100
+    let bandMid = 0; // 80-99
+    let bandLow = 0; // < 80
+    for (const r of rows) {
+      if (r.avg_score === null) continue;
+      const v = safeNum(r.avg_score);
+      if (v >= 100) bandHigh += safeNum(r.site_count);
+      else if (v >= 80) bandMid += safeNum(r.site_count);
+      else bandLow += safeNum(r.site_count);
+    }
+
+    return {
+      sites,
+      sumKwh,
+      targetAch,
+      baseAch,
+      notAch,
+      zero,
+      avgScore,
+      bandHigh,
+      bandMid,
+      bandLow,
+    };
   }, [rows]);
 
   const pieData = useMemo(
@@ -213,16 +256,15 @@ export default function CpUnitsDashboardPage() {
   );
 
   const pieColors: Record<string, string> = {
-    target: "#16a34a", // green
-    base: "#2563eb", // blue
-    not: "#dc2626", // red
-    zero: "#6b7280", // gray
+    target: "#16a34a",
+    base: "#2563eb",
+    not: "#f59e0b",
+    zero: "#6b7280",
   };
 
   const totalPie = pieData.reduce((acc, d) => acc + (d.value ?? 0), 0);
   const hasAny = totalPie > 0;
 
-  // ✅ FIX: percent is unknown => cast safely
   const pieLabel = ({ name, percent }: PieLabelProps) => {
     const p = typeof percent === "number" ? percent : Number(percent);
     const pct = Number.isFinite(p) ? `${Math.round(p * 100)}%` : "";
@@ -231,6 +273,7 @@ export default function CpUnitsDashboardPage() {
 
   return (
     <div className="p-6 space-y-6 bg-white text-slate-900">
+      {/* Header + Filters (unchanged structure) */}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">CP Units Dashboard</h1>
@@ -300,7 +343,9 @@ export default function CpUnitsDashboardPage() {
         </div>
       ) : null}
 
+      {/* ✅ TOP ROW: Totals → Score → Target */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* 1) Totals */}
         <Card className="shadow-sm border-slate-200">
           <CardHeader>
             <CardTitle className="text-base">Totals</CardTitle>
@@ -314,80 +359,114 @@ export default function CpUnitsDashboardPage() {
               <span className="text-slate-600">Sum Units (KWH)</span>
               <span className="font-semibold">{fmt(totals.sumKwh, 0)}</span>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* 2) Score */}
+        <Card className="shadow-sm border-slate-200">
+          <CardHeader>
+            <CardTitle className="text-base">Score</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600">Avg CP Score</span>
+              <span className="font-semibold">{fmt(totals.avgScore, 0)}</span>
+            </div>
 
             <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Target Achieved</span>
-                <span className="font-semibold">{fmt(totals.targetAch)}</span>
+                <span className="text-slate-600">Score ≥ 100 (High)</span>
+                <span className="font-semibold">{fmt(totals.bandHigh)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Base Achieved</span>
-                <span className="font-semibold">{fmt(totals.baseAch)}</span>
+                <span className="text-slate-600">Score 80–99 (Mid)</span>
+                <span className="font-semibold">{fmt(totals.bandMid)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Target+Base Not Achieved</span>
-                <span className="font-semibold">{fmt(totals.notAch)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Zero/Null KWH</span>
-                <span className="font-semibold">{fmt(totals.zero)}</span>
+                <span className="text-slate-600">Score &lt; 80 (Low)</span>
+                <span className="font-semibold">{fmt(totals.bandLow)}</span>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-sm border-slate-200 lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">
-              Achievement Distribution
-            </CardTitle>
-            <div className="text-xs text-slate-500">
-              {loading ? "Loading…" : `Total: ${fmt(totalPie)}`}
-            </div>
+        {/* 3) Target / Achievement */}
+        <Card className="shadow-sm border-slate-200">
+          <CardHeader>
+            <CardTitle className="text-base">Target</CardTitle>
           </CardHeader>
-
-          <CardContent className="h-[300px]">
-            {loading ? (
-              <div className="h-full flex items-center justify-center text-sm text-slate-600">
-                Loading…
-              </div>
-            ) : !hasAny ? (
-              <div className="h-full flex items-center justify-center text-sm text-slate-600">
-                No data for selected filters
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={pieData}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius="58%"
-                    outerRadius="85%"
-                    paddingAngle={3}
-                    strokeWidth={1}
-                    labelLine={false}
-                    label={pieLabel}
-                  >
-                    {pieData.map((d) => (
-                      <Cell key={d.key} fill={pieColors[d.key]} />
-                    ))}
-                  </Pie>
-
-                  <Tooltip
-                    formatter={(value: any, name: any) => [
-                      fmt(Number(value), 0),
-                      String(name),
-                    ]}
-                  />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
+          <CardContent className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600">Target Achieved</span>
+              <span className="font-semibold">{fmt(totals.targetAch)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600">Base Achieved</span>
+              <span className="font-semibold">{fmt(totals.baseAch)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600">Target+Base Not Achieved</span>
+              <span className="font-semibold">{fmt(totals.notAch)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600">Zero/Null KWH</span>
+              <span className="font-semibold">{fmt(totals.zero)}</span>
+            </div>
           </CardContent>
         </Card>
       </div>
 
+      {/* Chart (keep your existing) */}
+      <Card className="shadow-sm border-slate-200">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">Achievement Distribution</CardTitle>
+          <div className="text-xs text-slate-500">
+            {loading ? "Loading…" : `Total: ${fmt(totalPie)}`}
+          </div>
+        </CardHeader>
+
+        <CardContent className="h-[320px]">
+          {loading ? (
+            <div className="h-full flex items-center justify-center text-sm text-slate-600">
+              Loading…
+            </div>
+          ) : !hasAny ? (
+            <div className="h-full flex items-center justify-center text-sm text-slate-600">
+              No data for selected filters
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius="58%"
+                  outerRadius="85%"
+                  paddingAngle={3}
+                  strokeWidth={1}
+                  labelLine={false}
+                  label={pieLabel}
+                >
+                  {pieData.map((d) => (
+                    <Cell key={d.key} fill={pieColors[d.key]} />
+                  ))}
+                </Pie>
+
+                <Tooltip
+                  formatter={(value: any, name: any) => [
+                    fmt(Number(value), 0),
+                    String(name),
+                  ]}
+                />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Table (unchanged) */}
       <Card className="shadow-sm border-slate-200">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
@@ -400,7 +479,7 @@ export default function CpUnitsDashboardPage() {
 
         <CardContent>
           <div className="overflow-auto border border-slate-200 rounded-md">
-            <table className="min-w-[1200px] w-full text-sm">
+            <table className="min-w-[1350px] w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200">
                 <tr className="text-left">
                   <th className="px-3 py-2">Region</th>
@@ -409,6 +488,7 @@ export default function CpUnitsDashboardPage() {
                   <th className="px-3 py-2">Sum KWH</th>
                   <th className="px-3 py-2">Avg Base</th>
                   <th className="px-3 py-2">Avg Target</th>
+                  <th className="px-3 py-2">Avg Score</th>
                   <th className="px-3 py-2">Target Achieved</th>
                   <th className="px-3 py-2">Base Achieved</th>
                   <th className="px-3 py-2">Target+Base Not Achieved</th>
@@ -428,6 +508,9 @@ export default function CpUnitsDashboardPage() {
                     <td className="px-3 py-2">{fmt(r.sum_kwh, 0)}</td>
                     <td className="px-3 py-2">{fmt(r.avg_base, 0)}</td>
                     <td className="px-3 py-2">{fmt(r.avg_target, 0)}</td>
+                    <td className="px-3 py-2 font-semibold">
+                      {fmt(r.avg_score, 0)}
+                    </td>
                     <td className="px-3 py-2">{fmt(r.target_achieved)}</td>
                     <td className="px-3 py-2">{fmt(r.base_achieved)}</td>
                     <td className="px-3 py-2">
@@ -440,7 +523,7 @@ export default function CpUnitsDashboardPage() {
                 {!loading && rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={10}
+                      colSpan={11}
                       className="px-3 py-8 text-center text-slate-600"
                     >
                       No rows returned for selected filters.

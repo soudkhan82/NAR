@@ -83,7 +83,9 @@ export async function fetchCaDateBounds(): Promise<CaDateBounds> {
   const { data, error } = await supabase.rpc("fetch_ca_date_bounds");
   if (error) throw new Error(error.message);
 
-  const row = Array.isArray(data) ? (data[0] as { min_date?: string; max_date?: string } | undefined) : undefined;
+  const row = Array.isArray(data)
+    ? (data[0] as { min_date?: string; max_date?: string } | undefined)
+    : undefined;
 
   return {
     minISO: row?.min_date ?? null,
@@ -96,11 +98,14 @@ export async function fetchSubregionTargets(args: {
   asOfISO: string; // YYYY-MM-DD
   frequency: Frequency;
 }): Promise<SubregionTargetsRow[]> {
-  const { data, error } = await supabase.rpc("fetch_cell_avail_subregion_targets", {
-    p_region: mapRegionToParam(args.region),
-    p_asof: args.asOfISO,
-    p_freq: args.frequency,
-  });
+  const { data, error } = await supabase.rpc(
+    "fetch_cell_avail_subregion_targets",
+    {
+      p_region: mapRegionToParam(args.region),
+      p_asof: args.asOfISO,
+      p_freq: args.frequency,
+    }
+  );
 
   if (error) throw new Error(error.message);
   return (data ?? []) as SubregionTargetsRow[];
@@ -112,12 +117,15 @@ export async function fetchTargetHitlist(args: {
   frequency: Frequency;
   classGroup: "PGS" | "SB";
 }): Promise<HitlistRow[]> {
-  const { data, error } = await supabase.rpc("fetch_cell_avail_target_hitlist", {
-    p_region: mapRegionToParam(args.region),
-    p_asof: args.asOfISO,
-    p_freq: args.frequency,
-    p_class: args.classGroup,
-  });
+  const { data, error } = await supabase.rpc(
+    "fetch_cell_avail_target_hitlist",
+    {
+      p_region: mapRegionToParam(args.region),
+      p_asof: args.asOfISO,
+      p_freq: args.frequency,
+      p_class: args.classGroup,
+    }
+  );
 
   if (error) throw new Error(error.message);
   return (data ?? []) as HitlistRow[];
@@ -125,7 +133,7 @@ export async function fetchTargetHitlist(args: {
 
 export async function fetchCellAvailBundle(args: {
   dateFrom: string; // YYYY-MM-DD
-  dateTo: string;   // YYYY-MM-DD
+  dateTo: string; // YYYY-MM-DD
   region: Region;
   subregion: string | null;
   grid: string | null;
@@ -149,6 +157,10 @@ export async function fetchCellAvailBundle(args: {
     daily: Array.isArray(obj.daily) ? obj.daily : [],
     by_grid: Array.isArray(obj.by_grid) ? obj.by_grid : [],
     by_district: Array.isArray(obj.by_district) ? obj.by_district : [],
-    cards: (obj.cards ?? { site_count: null, avg_pgs: null, avg_sb: null }) as BundleCards,
+    cards: (obj.cards ?? {
+      site_count: null,
+      avg_pgs: null,
+      avg_sb: null,
+    }) as BundleCards,
   };
 }

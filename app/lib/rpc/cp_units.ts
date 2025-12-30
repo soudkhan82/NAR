@@ -8,6 +8,10 @@ export type CpUnitsSummaryRow = {
   sum_kwh: number | null;
   avg_base: number | null;
   avg_target: number | null;
+
+  // ✅ NEW: coming from RPC
+  avg_score: number | null;
+
   target_achieved: number;
   base_achieved: number;
   target_and_base_not_achieved: number;

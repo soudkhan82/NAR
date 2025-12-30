@@ -1,11 +1,15 @@
 import supabase from "@/app/config/supabase-config";
 
-// --- Types ---
+/** ---------- Types ---------- */
 
 export type SummaryFiltered = {
   distinct_engines: number;
   total_fuel: number;
-  valid_fueling_entries: number; // For accurate Average calculation
+  valid_fueling_entries: number;
+
+  avg_score: number; // NEW
+  score_entries: number; // NEW
+
   target_achieved: number;
   base_achieved: number;
   below_base: number;
@@ -15,6 +19,10 @@ export type SummaryFiltered = {
 export type BreakdownFilteredRow = {
   Region: string;
   SubRegion: string;
+
+  avg_score: number; // NEW
+  score_entries: number; // NEW
+
   target_achieved: number;
   base_achieved: number;
   below_base: number;
@@ -22,29 +30,14 @@ export type BreakdownFilteredRow = {
   total_count: number;
 };
 
-// --- Fetching Functions ---
+/** ---------- Fetching ---------- */
 
-/**
- * Fetches the minimum and maximum month available in the dataset
- */
-export async function fetchDateBounds() {
-  const { data, error } = await supabase.rpc("fetch_dg_date_bounds");
-  if (error) throw error;
-  return data?.[0] as { min_date: string; max_date: string } | null;
-}
-
-/**
- * Fetches a list of all unique regions
- */
 export async function fetchRegions(): Promise<{ region: string }[]> {
   const { data, error } = await supabase.rpc("fetch_dg_regions");
   if (error) throw error;
   return (data ?? []) as { region: string }[];
 }
 
-/**
- * Fetches unique subregions, optionally filtered by region
- */
 export async function fetchSubRegions(
   region: string | null
 ): Promise<{ subregion: string }[]> {
@@ -55,9 +48,6 @@ export async function fetchSubRegions(
   return (data ?? []) as { subregion: string }[];
 }
 
-/**
- * Fetches aggregated summary data for the top KPI cards
- */
 export async function fetchSummaryFiltered(params: {
   region: string | null;
   subRegion: string | null;
@@ -78,6 +68,10 @@ export async function fetchSummaryFiltered(params: {
     distinct_engines: Number(r?.distinct_engines ?? 0),
     total_fuel: Number(r?.total_fuel ?? 0),
     valid_fueling_entries: Number(r?.valid_fueling_entries ?? 0),
+
+    avg_score: Number(r?.avg_score ?? 0), // NEW
+    score_entries: Number(r?.score_entries ?? 0), // NEW
+
     target_achieved: Number(r?.target_achieved ?? 0),
     base_achieved: Number(r?.base_achieved ?? 0),
     below_base: Number(r?.below_base ?? 0),
@@ -85,9 +79,6 @@ export async function fetchSummaryFiltered(params: {
   };
 }
 
-/**
- * Fetches breakdown data per sub-region for charts and tables
- */
 export async function fetchBreakdownFiltered(params: {
   region: string | null;
   subRegion: string | null;
@@ -109,6 +100,10 @@ export async function fetchBreakdownFiltered(params: {
   return (data ?? []).map((r: any) => ({
     Region: r.region ?? "Unknown",
     SubRegion: r.subregion ?? "Unknown",
+
+    avg_score: Number(r.avg_score ?? 0), // NEW
+    score_entries: Number(r.score_entries ?? 0), // NEW
+
     target_achieved: Number(r.target_achieved ?? 0),
     base_achieved: Number(r.base_achieved ?? 0),
     below_base: Number(r.below_base ?? 0),
