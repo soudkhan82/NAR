@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import supabase from "@/app/config/supabase-config";
-
-type PageProps = { params: { id: string } };
 
 /**
  * We don’t hardcode the full RMS schema here because it’s huge and may evolve.
@@ -255,15 +254,22 @@ const CAT: Record<
   },
 };
 
-export default function RmsQueryPage({ params }: PageProps) {
-  const siteName = decodeURIComponent(params.id ?? "").trim();
+export default function RmsQueryPage() {
+  // ✅ Client-safe: no Promise params. Works in Next 14/15.
+  const params = useParams<{ id?: string | string[] }>();
+  const rawId = Array.isArray(params?.id) ? params?.id?.[0] : params?.id;
+
+  const siteName = useMemo(() => {
+    const v = String(rawId ?? "").trim();
+    return v ? decodeURIComponent(v).trim() : "";
+  }, [rawId]);
 
   const [rows, setRows] = useState<RmsRecord[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [query, setQuery] = useState<string>("");
-  const [onlyFilled, setOnlyFilled] = useState<boolean>(true);
+  const [query, setQuery] = useState("");
+  const [onlyFilled, setOnlyFilled] = useState(true);
 
   useEffect(() => {
     if (!siteName) return;
@@ -277,6 +283,7 @@ export default function RmsQueryPage({ params }: PageProps) {
           .from("RMS")
           .select("*")
           .eq("SiteName", siteName);
+
         if (error) throw new Error(error.message);
         setRows(normalizeRows(data));
       } catch (e: unknown) {

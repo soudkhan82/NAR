@@ -2,6 +2,7 @@
 import Link from "next/link";
 import supabase from "@/app/config/supabase-config";
 import RmsDetailsView from "@/app/Rms/RmsDetails";
+import RmsHeaderSearch from "@/app/Rms/RmsHeaderSearch";
 
 type RmsSummaryRow = {
   region: string | null;
@@ -32,11 +33,7 @@ function num(n: number | null | undefined) {
   return Number.isFinite(v) ? v.toLocaleString() : "0";
 }
 
-function detailsHref(
-  subregion: string | null,
-  indicator: string,
-  label: string
-) {
+function detailsHref(subregion: string | null, indicator: string, label: string) {
   const sr = encodeURIComponent(subregion ?? "");
   const ind = encodeURIComponent(indicator);
   const lab = encodeURIComponent(label);
@@ -52,16 +49,13 @@ function pct(value: number, max: number) {
   return clamp((value / max) * 100);
 }
 
-function cellGradientStyle(
-  value: number,
-  maxValue: number
-): React.CSSProperties {
+function cellGradientStyle(value: number, maxValue: number) {
   const p = pct(value, maxValue);
   const fill = `rgba(56, 189, 248, 0.35)`;
   const base = `rgba(255, 255, 255, 0.06)`;
   return {
     backgroundImage: `linear-gradient(90deg, ${fill} ${p}%, ${base} ${p}%)`,
-  };
+  } as React.CSSProperties;
 }
 
 function IndicatorCell(props: {
@@ -81,11 +75,7 @@ function IndicatorCell(props: {
 
   if (disabled) {
     return (
-      <span
-        className={`${commonClass} text-slate-200/80`}
-        style={style}
-        title={props.label}
-      >
+      <span className={`${commonClass} text-slate-200/80`} style={style} title={props.label}>
         {num(v)}
       </span>
     );
@@ -106,24 +96,19 @@ function IndicatorCell(props: {
 export default async function RmsPage({
   searchParams,
 }: {
-  searchParams?: { subregion?: string; indicator?: string; label?: string };
+  searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>;
 }) {
-  const subregion = (searchParams?.subregion ?? "").trim();
-  const indicator = (searchParams?.indicator ?? "").trim();
-  const label = (searchParams?.label ?? "RMS Details").trim();
+  // Works in both Next 14 (object) and Next 15 (Promise)
+  const sp = await Promise.resolve(searchParams ?? {});
+  const subregion = String(sp.subregion ?? "").trim();
+  const indicator = String(sp.indicator ?? "").trim();
+  const label = String(sp.label ?? "RMS Details").trim();
 
-  // Drill-down view
+  // Drill-down
   if (subregion && indicator) {
-    return (
-      <RmsDetailsView
-        subregion={subregion}
-        indicator={indicator}
-        label={label}
-      />
-    );
+    return <RmsDetailsView subregion={subregion} indicator={indicator} label={label} />;
   }
 
-  // ✅ Use RPC instead of view
   const { data, error } = await supabase.rpc("fetch_rms_subregion_summary");
 
   if (error) {
@@ -140,23 +125,14 @@ export default async function RmsPage({
   const rows = (data ?? []) as RmsSummaryRow[];
 
   const max = {
-    rms_disconnected: Math.max(
-      ...rows.map((r) => Number(r.rms_disconnected_count ?? 0)),
-      0
-    ),
+    rms_disconnected: Math.max(...rows.map((r) => Number(r.rms_disconnected_count ?? 0)), 0),
     ip_yes: Math.max(...rows.map((r) => Number(r.ip_connectivity_yes ?? 0)), 0),
     ip_no: Math.max(...rows.map((r) => Number(r.ip_connectivity_no ?? 0)), 0),
     phase_1: Math.max(...rows.map((r) => Number(r.phase_1_missing ?? 0)), 0),
     phase_2: Math.max(...rows.map((r) => Number(r.phase_2_missing ?? 0)), 0),
     batt: Math.max(...rows.map((r) => Number(r.battery_health_lt70 ?? 0)), 0),
-    smr_short: Math.max(
-      ...rows.map((r) => Number(r.smr_shortfall_count ?? 0)),
-      0
-    ),
-    crit: Math.max(
-      ...rows.map((r) => Number(r.critical_shortfall_count ?? 0)),
-      0
-    ),
+    smr_short: Math.max(...rows.map((r) => Number(r.smr_shortfall_count ?? 0)), 0),
+    crit: Math.max(...rows.map((r) => Number(r.critical_shortfall_count ?? 0)), 0),
     extra: Math.max(...rows.map((r) => Number(r.extra_smr_count ?? 0)), 0),
     ac_norm: Math.max(...rows.map((r) => Number(r.ac_spd_normal ?? 0)), 0),
     ac_abn: Math.max(...rows.map((r) => Number(r.ac_spd_abnormal ?? 0)), 0),
@@ -165,13 +141,18 @@ export default async function RmsPage({
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <div className="p-6 space-y-4">
-        <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-5">
-          <h1 className="text-2xl font-semibold text-white">
-            RMS Sub-Regional Summary
-          </h1>
-          <p className="text-sm text-slate-300">
-            Tap any indicator value to drill-down into SiteName list.
-          </p>
+        <div className="relative z-50 rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-semibold text-white">RMS Sub-Regional Summary</h1>
+              <p className="text-sm text-slate-300">
+                Tap any indicator value to drill-down into SiteName list.
+              </p>
+            </div>
+
+            {/* Client search box */}
+            <RmsHeaderSearch />
+          </div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur">
@@ -188,9 +169,7 @@ export default async function RmsPage({
                   <th className="px-3 py-3 text-right">IP No</th>
                   <th className="px-3 py-3 text-right">1 Phase Missing</th>
                   <th className="px-3 py-3 text-right">2 Phase Missing</th>
-                  <th className="px-3 py-3 text-right">
-                    Battery &lt;70% (Yes)
-                  </th>
+                  <th className="px-3 py-3 text-right">Battery &lt;70% (Yes)</th>
                   <th className="px-3 py-3 text-right">Shortfall</th>
                   <th className="px-3 py-3 text-right">Critical (&lt;95%)</th>
                   <th className="px-3 py-3 text-right">Extra</th>
@@ -208,16 +187,10 @@ export default async function RmsPage({
                     } hover:bg-white/10 transition`}
                   >
                     <td className="px-3 py-2">{r.region ?? "-"}</td>
-                    <td className="px-3 py-2 font-medium">
-                      {r.subregion ?? "-"}
-                    </td>
+                    <td className="px-3 py-2 font-medium">{r.subregion ?? "-"}</td>
 
-                    <td className="px-3 py-2 text-right">
-                      {num(r.overall_sites_count)}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {num(r.rms_sites_count)}
-                    </td>
+                    <td className="px-3 py-2 text-right">{num(r.overall_sites_count)}</td>
+                    <td className="px-3 py-2 text-right">{num(r.rms_sites_count)}</td>
 
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
@@ -228,6 +201,7 @@ export default async function RmsPage({
                         maxValue={max.rms_disconnected}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -237,6 +211,7 @@ export default async function RmsPage({
                         maxValue={max.ip_yes}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -246,6 +221,7 @@ export default async function RmsPage({
                         maxValue={max.ip_no}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -255,6 +231,7 @@ export default async function RmsPage({
                         maxValue={max.phase_1}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -264,6 +241,7 @@ export default async function RmsPage({
                         maxValue={max.phase_2}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -273,6 +251,7 @@ export default async function RmsPage({
                         maxValue={max.batt}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -282,6 +261,7 @@ export default async function RmsPage({
                         maxValue={max.smr_short}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -291,6 +271,7 @@ export default async function RmsPage({
                         maxValue={max.crit}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -300,6 +281,7 @@ export default async function RmsPage({
                         maxValue={max.extra}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -309,6 +291,7 @@ export default async function RmsPage({
                         maxValue={max.ac_norm}
                       />
                     </td>
+
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
                         subregion={r.subregion}
@@ -323,10 +306,7 @@ export default async function RmsPage({
 
                 {rows.length === 0 && (
                   <tr>
-                    <td
-                      className="px-3 py-6 text-center text-slate-300"
-                      colSpan={15}
-                    >
+                    <td className="px-3 py-6 text-center text-slate-300" colSpan={15}>
                       No data found.
                     </td>
                   </tr>
