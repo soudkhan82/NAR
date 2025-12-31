@@ -80,40 +80,54 @@ function remarkColor(remark: string | null) {
   return "#ec4899";
 }
 
-/* ---------------- chart ---------------- */
+function chunk<T>(arr: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function isoAddDays(isoDate: string, deltaDays: number) {
+  const d = new Date(`${isoDate}T00:00:00`);
+  d.setDate(d.getDate() + deltaDays);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/* ---------------- charts ---------------- */
 function AvailabilityChart60d(props: {
-  data: FranchiseTimeseriesPoint[];
+  title: string;
+  data: Array<{
+    dt: string;
+    overall: number | null;
+    g2?: number | null;
+    g3?: number | null;
+    g4?: number | null;
+  }>;
+  latestLabel?: string | null;
   heightPx: number;
+  showTech?: boolean;
 }) {
   const rows = props.data ?? [];
-
-  const chartData = rows.map((r) => ({
-    dt: r.Report_Date,
-    overall: toPct(r.Overall),
-    g2: toPct(r["2G"]),
-    g3: toPct(r["3G"]),
-    g4: toPct(r["4G"]),
-  }));
-
-  const latest = rows[rows.length - 1];
+  const latest =
+    props.latestLabel ?? (rows.length ? rows[rows.length - 1]?.dt : null);
 
   return (
     <div className="w-full h-full flex flex-col">
       <div className="px-3 py-2 border-b">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="font-medium">Overall / 2G / 3G / 4G</div>
+            <div className="font-medium">{props.title}</div>
             <div className="text-xs text-muted-foreground">
               Y-axis fixed: 0–100 • Points {rows.length}
             </div>
           </div>
           <div className="text-xs text-muted-foreground text-right">
-            {latest?.Report_Date ? (
+            {latest ? (
               <>
                 Latest:{" "}
-                <span className="font-medium text-foreground">
-                  {latest.Report_Date}
-                </span>
+                <span className="font-medium text-foreground">{latest}</span>
               </>
             ) : (
               "—"
@@ -125,18 +139,16 @@ function AvailabilityChart60d(props: {
       <div className="flex-1 px-3 py-3">
         {!rows.length ? (
           <div className="h-full grid place-items-center text-sm text-muted-foreground">
-            No availability data for this SiteName
+            No availability data
           </div>
         ) : (
           <div style={{ height: props.heightPx }} className="w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
-                data={chartData}
-                // extra margins prevent ANY clipping (y label + legend + ticks)
+                data={rows}
                 margin={{ top: 16, right: 22, left: 34, bottom: 42 }}
               >
                 <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-
                 <XAxis
                   dataKey="dt"
                   tick={{ fontSize: 12 }}
@@ -149,7 +161,6 @@ function AvailabilityChart60d(props: {
                     offset: -24,
                   }}
                 />
-
                 <YAxis
                   domain={[0, 100]}
                   tick={{ fontSize: 12 }}
@@ -162,7 +173,6 @@ function AvailabilityChart60d(props: {
                     offset: -10,
                   }}
                 />
-
                 <Tooltip
                   labelFormatter={(v) => `Date: ${String(v)}`}
                   formatter={(value: unknown, name: string) => {
@@ -171,44 +181,50 @@ function AvailabilityChart60d(props: {
                     return [`${n.toFixed(1)}%`, name];
                   }}
                 />
-
                 <Legend
                   verticalAlign="bottom"
                   height={30}
                   wrapperStyle={{ paddingTop: 8 }}
                 />
 
+                {/* DISTINCT COLORS */}
                 <Line
                   type="monotone"
                   dataKey="overall"
                   name="Overall"
                   dot={false}
                   strokeWidth={2.6}
+                  stroke="#111827"
                 />
-                <Line
-                  type="monotone"
-                  dataKey="g2"
-                  name="2G"
-                  dot={false}
-                  strokeWidth={2.2}
-                  opacity={0.95}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="g3"
-                  name="3G"
-                  dot={false}
-                  strokeWidth={2.2}
-                  opacity={0.85}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="g4"
-                  name="4G"
-                  dot={false}
-                  strokeWidth={2.2}
-                  opacity={0.75}
-                />
+
+                {props.showTech && (
+                  <>
+                    <Line
+                      type="monotone"
+                      dataKey="g4"
+                      name="4G"
+                      dot={false}
+                      strokeWidth={2.2}
+                      stroke="#2563eb"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="g3"
+                      name="3G"
+                      dot={false}
+                      strokeWidth={2.2}
+                      stroke="#16a34a"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="g2"
+                      name="2G"
+                      dot={false}
+                      strokeWidth={2.2}
+                      stroke="#f59e0b"
+                    />
+                  </>
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -256,10 +272,29 @@ export default function FranchisePage() {
     null
   );
 
-  // timeseries
+  // selected site timeseries
   const [ts, setTs] = useState<FranchiseTimeseriesPoint[]>([]);
   const [tsLoading, setTsLoading] = useState(false);
   const [tsErr, setTsErr] = useState<string | null>(null);
+
+  // overall availability timeseries
+  const [latestAvailDate, setLatestAvailDate] = useState<string | null>(null);
+  const [overallTs, setOverallTs] = useState<
+    Array<{ dt: string; overall: number | null }>
+  >([]);
+  const [overallLoading, setOverallLoading] = useState(false);
+  const [overallErr, setOverallErr] = useState<string | null>(null);
+
+  // KPI cards (NOW via SQL RPC)
+  const [kpiLoading, setKpiLoading] = useState(false);
+  const [kpiErr, setKpiErr] = useState<string | null>(null);
+  const [kpis, setKpis] = useState({
+    totalRows: 0,
+    pgsRows: 0,
+    sbRows: 0,
+    otherRows: 0,
+    distinctSites: 0,
+  });
 
   // map refs
   const mapRef = useRef<Leaflet.Map | null>(null);
@@ -289,7 +324,32 @@ export default function FranchisePage() {
     }
   }, []);
 
-  /* fetch enriched */
+  /* latest availability date */
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("Cell_Availability")
+          .select("Report_Date")
+          .order("Report_Date", { ascending: false })
+          .limit(1);
+
+        if (error) throw error;
+        const d = data?.[0]?.Report_Date
+          ? String(data[0].Report_Date).slice(0, 10)
+          : null;
+        if (mounted) setLatestAvailDate(d);
+      } catch (e) {
+        if (mounted) setLatestAvailDate(null);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  /* fetch enriched + patch District/Grid from SSL */
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -300,20 +360,75 @@ export default function FranchisePage() {
         const data = await fetchFranchiseEnriched();
         if (!mounted) return;
 
-        setRows(data);
+        const siteNames = Array.from(
+          new Set(
+            data
+              .map((x) => String(x.SiteName ?? "").trim())
+              .filter((s) => s.length > 0)
+          )
+        );
+
+        const sslMap = new Map<
+          string,
+          { District: string | null; Grid: string | null }
+        >();
+
+        const needsPatch = data.some(
+          (r) =>
+            !r.District ||
+            String(r.District).trim() === "" ||
+            !r.Grid ||
+            String(r.Grid).trim() === ""
+        );
+
+        if (needsPatch && siteNames.length) {
+          for (const batch of chunk(siteNames, 500)) {
+            const { data: sslRows, error } = await supabase
+              .from("SSL")
+              .select("SiteName,District,Grid")
+              .in("SiteName", batch);
+
+            if (error) throw error;
+
+            (sslRows ?? []).forEach((s: any) => {
+              const sn = String(s?.SiteName ?? "").trim();
+              if (!sn) return;
+              sslMap.set(sn, {
+                District: s?.District ?? null,
+                Grid: s?.Grid ?? null,
+              });
+            });
+          }
+        }
+
+        const patched = data.map((r) => {
+          const sn = String(r.SiteName ?? "").trim();
+          const ssl = sn ? sslMap.get(sn) : undefined;
+          return {
+            ...r,
+            District: r.District ?? ssl?.District ?? null,
+            Grid: r.Grid ?? ssl?.Grid ?? null,
+          };
+        });
+
+        setRows(patched);
 
         const subs = Array.from(
-          new Set(data.map((x) => x.SubRegion).filter((v): v is string => !!v))
+          new Set(
+            patched.map((x) => x.SubRegion).filter((v): v is string => !!v)
+          )
         ).sort();
         const gs = Array.from(
-          new Set(data.map((x) => x.Grid).filter((v): v is string => !!v))
+          new Set(patched.map((x) => x.Grid).filter((v): v is string => !!v))
         ).sort();
         const ds = Array.from(
-          new Set(data.map((x) => x.District).filter((v): v is string => !!v))
+          new Set(
+            patched.map((x) => x.District).filter((v): v is string => !!v)
+          )
         ).sort();
         const rems = Array.from(
           new Set(
-            data
+            patched
               .map((x) => (x.remarks ?? "").trim())
               .filter((s) => s.length > 0)
           )
@@ -330,13 +445,12 @@ export default function FranchisePage() {
         setRemarksFilter(null);
         setSelectedRow(null);
 
-        runDiagnostics(data);
+        runDiagnostics(patched);
       } catch (e: unknown) {
         const msg =
           e instanceof Error ? e.message : "Failed to load franchise data.";
         setErrorMsg(msg);
         setRows([]);
-        console.error("❌ Franchise fetch error:", e);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -346,7 +460,7 @@ export default function FranchisePage() {
     };
   }, [runDiagnostics]);
 
-  /* filtered */
+  /* filtered (client-side, same visuals as before) */
   const filtered = useMemo(() => {
     const siteTokens = tokenize(siteSearch);
     const frTokens = tokenize(franchiseSearch);
@@ -390,6 +504,73 @@ export default function FranchisePage() {
     district,
     remarksFilter,
   ]);
+
+  /* KPI cards via SQL (based on EXACT filtered ids => totals will match) */
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setKpiErr(null);
+
+      const ids = filtered
+        .map((r: any) => Number(r.id))
+        .filter(Number.isFinite);
+
+      if (!ids.length) {
+        if (mounted)
+          setKpis({
+            totalRows: 0,
+            pgsRows: 0,
+            sbRows: 0,
+            otherRows: 0,
+            distinctSites: 0,
+          });
+        return;
+      }
+
+      setKpiLoading(true);
+      try {
+        const { data, error } = await supabase.rpc(
+          "fetch_franchise_kpis_by_ids",
+          {
+            p_ids: ids,
+          }
+        );
+
+        if (error) throw error;
+
+        const row = Array.isArray(data) ? data[0] : data;
+        const next = {
+          totalRows: Number(row?.total_rows ?? 0),
+          pgsRows: Number(row?.pgs_rows ?? 0),
+          sbRows: Number(row?.sb_rows ?? 0),
+          otherRows: Number(row?.other_rows ?? 0),
+          distinctSites: Number(row?.distinct_sites ?? 0),
+        };
+
+        if (mounted) setKpis(next);
+      } catch (e: unknown) {
+        if (!mounted) return;
+        setKpiErr(
+          e instanceof Error ? e.message : "Failed to compute KPI cards."
+        );
+        // fallback so UI still renders
+        setKpis({
+          totalRows: filtered.length,
+          pgsRows: 0,
+          sbRows: 0,
+          otherRows: 0,
+          distinctSites: new Set(
+            filtered.map((x) => String(x.SiteName ?? "").trim()).filter(Boolean)
+          ).size,
+        });
+      } finally {
+        if (mounted) setKpiLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [filtered]);
 
   /* map init */
   useEffect(() => {
@@ -565,12 +746,90 @@ export default function FranchisePage() {
     };
   }, [selectedRow?.SiteName]);
 
+  /* overall availability timeseries (ALL SiteNames in current filters) */
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setOverallErr(null);
+
+      const asOf = latestAvailDate;
+      const siteNames = Array.from(
+        new Set(
+          filtered
+            .map((r) => String(r.SiteName ?? "").trim())
+            .filter((s) => s.length > 0)
+        )
+      );
+
+      if (!asOf || !siteNames.length) {
+        if (mounted) setOverallTs([]);
+        return;
+      }
+
+      const from = isoAddDays(asOf, -59);
+
+      setOverallLoading(true);
+      try {
+        const agg = new Map<string, { sum: number; cnt: number }>();
+
+        for (const batch of chunk(siteNames, 500)) {
+          const { data, error } = await supabase
+            .from("Cell_Availability")
+            .select("Report_Date,SiteName,Overall")
+            .gte("Report_Date", from)
+            .lte("Report_Date", asOf)
+            .in("SiteName", batch);
+
+          if (error) throw error;
+
+          (data ?? []).forEach((r: any) => {
+            const dt = String(r?.Report_Date ?? "").slice(0, 10);
+            const v = toPct(r?.Overall);
+            if (!dt || v === null) return;
+
+            const cur = agg.get(dt) ?? { sum: 0, cnt: 0 };
+            cur.sum += v;
+            cur.cnt += 1;
+            agg.set(dt, cur);
+          });
+        }
+
+        const out: Array<{ dt: string; overall: number | null }> = [];
+        for (let i = 59; i >= 0; i--) {
+          const dt = isoAddDays(asOf, -i);
+          const cur = agg.get(dt);
+          out.push({
+            dt,
+            overall: cur && cur.cnt > 0 ? cur.sum / cur.cnt : null,
+          });
+        }
+
+        if (mounted) setOverallTs(out);
+      } catch (e: unknown) {
+        if (!mounted) return;
+        setOverallTs([]);
+        setOverallErr(
+          e instanceof Error
+            ? e.message
+            : "Failed to load overall availability."
+        );
+      } finally {
+        if (mounted) setOverallLoading(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [filtered, latestAvailDate]);
+
   return (
     <div className="p-3 space-y-3">
       {/* Filters */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-2 relative z-[50]">
         <Card className="md:col-span-12">
           <CardContent className="p-3 grid grid-cols-1 md:grid-cols-12 gap-3">
+            {/* ... your existing filters unchanged ... */}
             <div className="md:col-span-3">
               <div className="text-xs mb-1">SubRegion</div>
               <select
@@ -716,6 +975,92 @@ export default function FranchisePage() {
         </Card>
       </div>
 
+      {/* KPI CARDS (SQL-backed, totals match Showing X rows) */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+        <Card className="md:col-span-3">
+          <CardContent className="p-3">
+            <div className="text-xs text-muted-foreground">
+              Total Franchises
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="text-2xl font-semibold">
+                {kpis.totalRows.toLocaleString()}
+              </div>
+              {kpiLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="md:col-span-3">
+          <CardContent className="p-3">
+            <div className="text-xs text-muted-foreground">
+              PGS Sites (Platinum | Gold | Strategic)
+            </div>
+            <div className="text-2xl font-semibold">
+              {kpis.pgsRows.toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="md:col-span-3">
+          <CardContent className="p-3">
+            <div className="text-xs text-muted-foreground">
+              SB Sites (Silver | Bronze)
+            </div>
+            <div className="text-2xl font-semibold">
+              {kpis.sbRows.toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="md:col-span-3">
+          <CardContent className="p-3">
+            <div className="text-xs text-muted-foreground">
+              Total Sites in Filters
+            </div>
+            <div className="text-2xl font-semibold">
+              {kpis.distinctSites.toLocaleString()}
+            </div>
+            {!!kpis.otherRows && (
+              <div className="text-xs text-muted-foreground mt-1">
+                Other/Unknown rows: {kpis.otherRows.toLocaleString()}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {kpiErr && <div className="text-xs text-rose-600 px-1">{kpiErr}</div>}
+
+      {/* OVERALL availability chart */}
+      <Card className="overflow-hidden">
+        <CardContent className="p-0">
+          <div className="px-3 py-2 flex items-center justify-between border-b">
+            <div className="font-medium">
+              Overall Availability (All filtered SiteNames • last 60 days)
+              <span className="text-muted-foreground">
+                {latestAvailDate ? ` • as-of ${latestAvailDate}` : ""}
+              </span>
+            </div>
+            {overallLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+          </div>
+
+          {overallErr && (
+            <div className="px-3 py-2 text-xs text-rose-600 border-b">
+              {overallErr}
+            </div>
+          )}
+
+          <AvailabilityChart60d
+            title="Overall (Avg across sites)"
+            data={overallTs}
+            latestLabel={latestAvailDate}
+            heightPx={280}
+            showTech={false}
+          />
+        </CardContent>
+      </Card>
+
       {/* ===== 3 visuals in ONE ROW: Table | Map | Chart ===== */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 items-stretch">
         {/* TABLE */}
@@ -834,7 +1179,7 @@ export default function FranchisePage() {
           </CardContent>
         </Card>
 
-        {/* CHART */}
+        {/* SELECTED SITE CHART */}
         <Card className="xl:col-span-4 h-[560px] overflow-hidden">
           <CardContent className="p-0 h-full flex flex-col">
             <div className="px-3 py-2 flex items-center justify-between border-b">
@@ -859,8 +1204,23 @@ export default function FranchisePage() {
                   Select a row to load the last 60 days trend
                 </div>
               ) : (
-                // inner chart height tuned so legend + labels never clip
-                <AvailabilityChart60d data={ts} heightPx={480} />
+                <AvailabilityChart60d
+                  title="Overall / 4G / 3G / 2G"
+                  data={(ts ?? []).map((r) => ({
+                    dt: r.Report_Date,
+                    overall: toPct(r.Overall),
+                    g4: toPct((r as any)["4G"]),
+                    g3: toPct((r as any)["3G"]),
+                    g2: toPct((r as any)["2G"]),
+                  }))}
+                  latestLabel={
+                    (ts ?? []).length
+                      ? (ts ?? [])[ts.length - 1]?.Report_Date
+                      : null
+                  }
+                  heightPx={480}
+                  showTech
+                />
               )}
             </div>
           </CardContent>
