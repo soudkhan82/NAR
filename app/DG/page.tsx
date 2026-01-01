@@ -1,3 +1,4 @@
+// app/DG/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -26,18 +27,19 @@ import {
 } from "@/components/ui/select";
 import { format, startOfMonth, endOfMonth, setMonth, setYear } from "date-fns";
 import {
-  Zap,
-  Fuel,
-  Target,
-  BarChart3,
-  TrendingUp,
   CalendarDays,
+  Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
-  Calendar as CalendarIcon,
-  Database,
   Download,
   Search,
+  Fuel,
+  Target,
+  Zap,
+  BarChart3,
+  Database,
+  TrendingUp,
+  Trophy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,19 +47,21 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+
 import {
-  fetchRegions,
-  fetchSubRegions,
-  fetchSummaryFiltered,
-  fetchBreakdownFiltered,
-  SummaryFiltered,
-  BreakdownFilteredRow,
+  fetchRegionNwdRollup,
+  fetchDgSubregions,
+  fetchDgSubregionRows,
+  fetchDgKpiSites,
+  type RegionRollupRow,
+  type SubregionRow,
+  type SiteKpiRow,
 } from "@/app/lib/rpc/dg_kpi";
 
+/* -------------------- helpers -------------------- */
 const MONTH_LABELS = [
   "Jan",
   "Feb",
@@ -72,7 +76,6 @@ const MONTH_LABELS = [
   "Nov",
   "Dec",
 ];
-
 const STATUS_COLORS = {
   target: "#10b981",
   base: "#3b82f6",
@@ -80,304 +83,166 @@ const STATUS_COLORS = {
   none: "#64748b",
 };
 
-const pct = (part: number, total: number) =>
-  total > 0 ? `${((part * 100) / total).toFixed(1)}%` : "0.0%";
-
-function downloadCsv(
-  filename: string,
-  headers: string[],
-  rows: (string | number)[][]
-) {
-  const escapeCsv = (v: string | number) => {
-    const s = String(v ?? "");
-    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-
-  const csv = [
-    headers.map(escapeCsv).join(","),
-    ...rows.map((r) => r.map(escapeCsv).join(",")),
-  ].join("\n");
-
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", filename);
-  link.style.visibility = "hidden";
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+function n(v: unknown) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
 }
 
 export default function DgKpiPage() {
   const [loading, setLoading] = useState(true);
-  const [region, setRegion] = useState("ALL");
-  const [subRegion, setSubRegion] = useState("ALL");
-
-  const [viewMode, setViewMode] = useState<"month" | "range">("month");
-  const [selectedMonth, setSelectedMonth] = useState(new Date(2025, 9, 1));
-  const [selectedRange, setSelectedRange] = useState<any>(undefined);
+  const [enginesLoading, setEnginesLoading] = useState(false);
+  const [region, setRegion] = useState<any>("ALL");
+  const [subRegion, setSubRegion] = useState<any>("ALL");
+  const [selectedTableSubregion, setSelectedTableSubregion] = useState<
+    string | null
+  >(null);
+  const [selectedMonth, setSelectedMonth] = useState(new Date(2025, 10, 1));
   const [pickerYear, setPickerYear] = useState(2025);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
-
-  const [regions, setRegions] = useState<string[]>([]);
-  const [subRegions, setSubRegions] = useState<string[]>([]);
-  const [summary, setSummary] = useState<SummaryFiltered | null>(null);
-  const [breakdown, setBreakdown] = useState<BreakdownFilteredRow[]>([]);
-
+  const [rollup, setRollup] = useState<RegionRollupRow[]>([]);
+  const [subregions, setSubregions] = useState<string[]>([]);
+  const [subRows, setSubRows] = useState<SubregionRow[]>([]);
+  const [engines, setEngines] = useState<SiteKpiRow[]>([]);
   const [tableSearch, setTableSearch] = useState("");
 
-  const dateParams = useMemo(() => {
-    if (viewMode === "month") {
-      return {
-        start: format(startOfMonth(selectedMonth), "yyyy-MM-dd"),
-        end: format(endOfMonth(selectedMonth), "yyyy-MM-dd"),
-        label: format(selectedMonth, "MMMM yyyy"),
-      };
-    }
-    return {
-      start: selectedRange?.from
-        ? format(selectedRange.from, "yyyy-MM-dd")
-        : null,
-      end: selectedRange?.to ? format(selectedRange.to, "yyyy-MM-dd") : null,
-      label: selectedRange?.from
-        ? `${format(selectedRange.from, "MMM dd")} - ${format(
-            selectedRange.to || selectedRange.from,
-            "MMM dd"
-          )}`
-        : "Select Range",
-    };
-  }, [viewMode, selectedMonth, selectedRange]);
+  const snapshotDate = useMemo(
+    () => format(endOfMonth(selectedMonth), "yyyy-MM-dd"),
+    [selectedMonth]
+  );
+
+  const rollupMap = useMemo(() => {
+    const m = new Map<string, RegionRollupRow>();
+    rollup.forEach((r) => m.set(String(r.region), r));
+    return m;
+  }, [rollup]);
 
   useEffect(() => {
-    fetchRegions().then((d) => setRegions(["ALL", ...d.map((x) => x.region)]));
-  }, []);
-
-  useEffect(() => {
-    const r = region === "ALL" ? null : region;
-    fetchSubRegions(r).then((d) => {
-      setSubRegions(["ALL", ...d.map((x) => x.subregion)]);
-      setSubRegion("ALL");
-    });
+    (async () => {
+      try {
+        const list = await fetchDgSubregions({
+          region: region === "ALL" ? null : region,
+        });
+        setSubregions(["ALL", ...list.map((x) => x.subregion).filter(Boolean)]);
+      } catch (e) {
+        console.error(e);
+      }
+    })();
   }, [region]);
 
   useEffect(() => {
-    let alive = true;
     (async () => {
-      if (!dateParams.start) return;
       setLoading(true);
       try {
-        const [sum, bd] = await Promise.all([
-          fetchSummaryFiltered({
+        const [roll, rows] = await Promise.all([
+          fetchRegionNwdRollup({ date: snapshotDate }),
+          fetchDgSubregionRows({
+            date: snapshotDate,
             region: region === "ALL" ? null : region,
-            subRegion: subRegion === "ALL" ? null : subRegion,
-            startDate: dateParams.start,
-            endDate: dateParams.end,
-          }),
-          fetchBreakdownFiltered({
-            region: region === "ALL" ? null : region,
-            subRegion: subRegion === "ALL" ? null : subRegion,
-            startDate: dateParams.start,
-            endDate: dateParams.end,
+            subregion: subRegion === "ALL" ? null : subRegion,
           }),
         ]);
-        if (alive) {
-          setSummary(sum);
-          setBreakdown(bd);
-        }
+        setRollup(roll);
+        setSubRows(rows);
       } catch (e) {
         console.error(e);
       } finally {
-        if (alive) setLoading(false);
+        setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
-  }, [region, subRegion, dateParams]);
+  }, [snapshotDate, region, subRegion]);
 
-  const avgFuel = useMemo(() => {
-    return summary && summary.valid_fueling_entries > 0
-      ? summary.total_fuel / summary.valid_fueling_entries
-      : 0;
-  }, [summary]);
-
-  const avgScore = useMemo(() => {
-    const s: any = summary as any;
-    return summary ? Number(s?.avg_score ?? 0) : 0;
-  }, [summary]);
-
-  const totalSites = useMemo(() => {
-    if (!summary) return 0;
-    return (
-      summary.target_achieved +
-      summary.base_achieved +
-      summary.below_base +
-      summary.no_fueling
-    );
-  }, [summary]);
-
-  const sortedBreakdown = useMemo(() => {
-    return [...breakdown].sort((a, b) =>
-      a.SubRegion.localeCompare(b.SubRegion)
-    );
-  }, [breakdown]);
-
-  // ✅ Region-level aggregated chart rows (prettier + fewer categories)
-  const chartRows = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        Region: string;
-        target_achieved: number;
-        base_achieved: number;
-        below_base: number;
-        no_fueling: number;
-        total_count: number;
-        _score_sum: number;
-        _score_entries: number;
-      }
-    >();
-
-    for (const rAny of sortedBreakdown as any[]) {
-      const regionKey = String(rAny.Region ?? rAny.region ?? "UNKNOWN").trim();
-
-      const target = Number(rAny.target_achieved ?? 0);
-      const base = Number(rAny.base_achieved ?? 0);
-      const below = Number(rAny.below_base ?? 0);
-      const none = Number(rAny.no_fueling ?? 0);
-      const total =
-        Number(rAny.total_count ?? 0) || target + base + below + none;
-
-      const rowAvgScore = Number(rAny.avg_score ?? 0);
-      const rowScoreEntries = Number(rAny.score_entries ?? 0);
-
-      if (!map.has(regionKey)) {
-        map.set(regionKey, {
-          Region: regionKey,
-          target_achieved: 0,
-          base_achieved: 0,
-          below_base: 0,
-          no_fueling: 0,
-          total_count: 0,
-          _score_sum: 0,
-          _score_entries: 0,
+  useEffect(() => {
+    (async () => {
+      setEnginesLoading(true);
+      try {
+        const data = await fetchDgKpiSites({
+          date: snapshotDate,
+          region: region,
+          subregion:
+            selectedTableSubregion || (subRegion !== "ALL" ? subRegion : null),
         });
+        setEngines(data);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setEnginesLoading(false);
       }
+    })();
+  }, [snapshotDate, region, subRegion, selectedTableSubregion]);
 
-      const acc = map.get(regionKey)!;
-      acc.target_achieved += target;
-      acc.base_achieved += base;
-      acc.below_base += below;
-      acc.no_fueling += none;
-      acc.total_count += total;
+  const currentRow = useMemo(() => {
+    if (subRegion !== "ALL") return subRows[0] ?? null;
+    if (region !== "ALL") return rollupMap.get(region) ?? null;
+    return rollupMap.get("NWD") ?? null;
+  }, [subRegion, subRows, region, rollupMap]);
 
-      if (rowScoreEntries > 0) {
-        acc._score_sum += rowAvgScore * rowScoreEntries;
-        acc._score_entries += rowScoreEntries;
-      }
-    }
+  const currentTotal = useMemo(() => {
+    const r = currentRow as any;
+    return r
+      ? n(r.target_achieved) +
+          n(r.base_achieved) +
+          n(r.below_base) +
+          n(r.no_fueling)
+      : 0;
+  }, [currentRow]);
 
-    const rows = Array.from(map.values()).map((x) => ({
-      Region: x.Region,
-      target_achieved: x.target_achieved,
-      base_achieved: x.base_achieved,
-      below_base: x.below_base,
-      no_fueling: x.no_fueling,
-      total_count: x.total_count,
-      avg_score: x._score_entries > 0 ? x._score_sum / x._score_entries : 0,
+  const barData = useMemo(() => {
+    const source =
+      region === "ALL"
+        ? ["Central", "North", "South"]
+            .map((k) => rollupMap.get(k))
+            .filter(Boolean)
+        : subRows;
+    return source.map((r: any) => ({
+      name: r.region || r.subregion,
+      target_achieved: n(r.target_achieved),
+      base_achieved: n(r.base_achieved),
+      below_base: n(r.below_base),
     }));
-
-    // keep a nice fixed order if your regions are Central/North/South
-    const ORDER = ["Central", "North", "South"];
-    rows.sort((a, b) => {
-      const ia = ORDER.indexOf(a.Region);
-      const ib = ORDER.indexOf(b.Region);
-      if (ia !== -1 || ib !== -1)
-        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-      return b.total_count - a.total_count;
-    });
-
-    return rows;
-  }, [sortedBreakdown]);
+  }, [region, rollupMap, subRows]);
 
   const pieData = useMemo(() => {
-    if (!summary) return [];
+    if (!currentRow) return [];
+    const r: any = currentRow;
     return [
       {
-        name: "Target Achieved",
-        value: summary.target_achieved,
+        name: "Target",
+        value: n(r.target_achieved),
         color: STATUS_COLORS.target,
       },
-      {
-        name: "Base Achieved",
-        value: summary.base_achieved,
-        color: STATUS_COLORS.base,
-      },
-      {
-        name: "Below Base",
-        value: summary.below_base,
-        color: STATUS_COLORS.below,
-      },
-      {
-        name: "No Fueling",
-        value: summary.no_fueling,
-        color: STATUS_COLORS.none,
-      },
+      { name: "Base", value: n(r.base_achieved), color: STATUS_COLORS.base },
+      { name: "Below", value: n(r.below_base), color: STATUS_COLORS.below },
+      { name: "Empty", value: n(r.no_fueling), color: STATUS_COLORS.none },
     ].filter((x) => x.value > 0);
-  }, [summary]);
+  }, [currentRow]);
 
-  const filteredTableRows = useMemo(() => {
+  const tableRows = useMemo(() => {
+    const rows = [...subRows].sort((a, b) =>
+      String(a.subregion).localeCompare(String(b.subregion))
+    );
     const q = tableSearch.trim().toLowerCase();
-    if (!q) return sortedBreakdown;
-    return sortedBreakdown.filter((r) => r.SubRegion.toLowerCase().includes(q));
-  }, [sortedBreakdown, tableSearch]);
+    return q
+      ? rows.filter((r) => String(r.subregion).toLowerCase().includes(q))
+      : rows;
+  }, [subRows, tableSearch]);
 
-  const handleDownloadTableCSV = () => {
-    if (filteredTableRows.length === 0) return;
-
-    downloadCsv(
-      `DG_KPI_SubRegion_${dateParams.label.replace(/\s+/g, "_")}.csv`,
-      [
-        "Sub-Region",
-        "Target Achieved",
-        "Base Achieved",
-        "Below Base",
-        "No Fueling",
-        "Avg Score",
-        "Achieved (%)",
-        "Total Sites",
-      ],
-      filteredTableRows.map((r: any) => {
-        const total =
-          Number(r.total_count ?? 0) ||
-          Number(r.target_achieved ?? 0) +
-            Number(r.base_achieved ?? 0) +
-            Number(r.below_base ?? 0) +
-            Number(r.no_fueling ?? 0);
-
-        return [
-          r.SubRegion,
-          r.target_achieved,
-          r.base_achieved,
-          r.below_base,
-          r.no_fueling,
-          Number(r.avg_score ?? 0).toFixed(1),
-          pct(r.target_achieved, total),
-          total,
-        ];
-      })
+  const renderGroupedValueLabel = (props: any) => {
+    const { x, y, width, value } = props;
+    if (!value) return null;
+    return (
+      <text
+        x={x + width / 2}
+        y={y - 6}
+        textAnchor="middle"
+        fill="#94a3b8"
+        fontSize={9}
+        fontWeight={900}
+      >
+        {value}
+      </text>
     );
   };
 
-  const handleMonthSelect = (idx: number) => {
-    setSelectedMonth(setYear(setMonth(new Date(), idx), pickerYear));
-    setViewMode("month");
-    setIsPickerOpen(false);
-  };
-
-  // PIE LABEL: nudge left-side labels up (fix Base Achieved hidden)
   const renderPieLabel = ({
     cx,
     cy,
@@ -390,420 +255,284 @@ export default function DgKpiPage() {
     const RADIAN = Math.PI / 180;
     const sin = Math.sin(-midAngle * RADIAN);
     const cos = Math.cos(-midAngle * RADIAN);
-
-    const sx = cx + (outerRadius + 6) * cos;
-    const sy = cy + (outerRadius + 6) * sin;
-    const mx = cx + (outerRadius + 18) * cos;
-    const my = cy + (outerRadius + 18) * sin;
-
+    const sx = cx + (outerRadius + 5) * cos;
+    const sy = cy + (outerRadius + 5) * sin;
+    const mx = cx + (outerRadius + 20) * cos;
+    const my = cy + (outerRadius + 20) * sin;
     const leftSide = cos < 0;
-    const yNudge = leftSide ? -12 : 0;
-
-    const ex = mx + (leftSide ? -1 : 1) * 12;
-    const ey = my + yNudge;
-    const textAnchor = leftSide ? "end" : "start";
-
+    const ex = mx + (leftSide ? -1 : 1) * 15;
     return (
       <g>
         <path
-          d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`}
+          d={`M${sx},${sy}L${mx},${my}L${ex},${my}`}
           stroke={color}
           fill="none"
-          strokeWidth={1.6}
+          strokeWidth={1}
         />
-        <circle cx={ex} cy={ey} r={2.2} fill={color} stroke="none" />
         <text
-          x={ex + (leftSide ? -1 : 1) * 8}
-          y={ey}
-          textAnchor={textAnchor}
+          x={ex + (leftSide ? -5 : 5)}
+          y={my}
+          textAnchor={leftSide ? "end" : "start"}
           fill={color}
-          dominantBaseline="central"
-          className="text-[12px] font-black uppercase"
+          fontSize={9}
+          fontWeight={900}
+          className="uppercase"
         >
-          {`${name}: ${(percent * 100).toFixed(0)}%`}
+          {`${name} ${(percent * 100).toFixed(0)}%`}
         </text>
       </g>
     );
   };
 
-  // ✅ Bar labels: inside if tall; above if tiny (so Base shows)
-  const renderGroupedValueLabel = (props: any) => {
-    const { x, y, width, height, value } = props;
-    const v = Number(value ?? 0);
-    if (!v) return null;
-
-    const isSmall = height < 22;
-    return (
-      <text
-        x={x + width / 2}
-        y={isSmall ? y - 8 : y + height / 2}
-        textAnchor="middle"
-        dominantBaseline="central"
-        className={cn(
-          "text-[12px] font-black",
-          isSmall ? "fill-slate-900" : "fill-white"
-        )}
-      >
-        {v}
-      </text>
-    );
-  };
-
   return (
-    <div className="min-h-screen bg-[#F8FAFC] font-sans pb-10">
-      <div className="absolute top-0 left-0 w-full h-[280px] bg-slate-950 z-0" />
+    <div className="min-h-screen bg-[#020617] text-slate-300 font-sans pb-10">
       <div className="relative z-10 p-6 space-y-6 max-w-[1600px] mx-auto">
-        {/* Header & Filter Row */}
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between pt-4">
+        {/* Header & Smaller Selects */}
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-2xl font-black text-white uppercase tracking-tight">
-              DG KPI <span className="text-blue-400">Analytics</span>
+            <h1 className="text-xl font-black text-white uppercase tracking-tighter">
+              DG KPI <span className="text-blue-500">Analytics</span>
             </h1>
-            <p className="text-[12px] text-slate-400 font-bold uppercase tracking-widest mt-1 flex items-center gap-2">
-              <CalendarIcon className="h-3 w-3" /> {dateParams.label}
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">
+              {format(selectedMonth, "MMMM yyyy")} • {region}
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full lg:w-[800px]">
-            <div className="space-y-1">
-              <label className="text-[12px] font-bold text-slate-500 uppercase ml-1">
-                Region
-              </label>
-              <Select value={region} onValueChange={setRegion}>
-                <SelectTrigger className="bg-white/10 border-white/5 text-white h-10 backdrop-blur-md">
+          <div className="flex flex-wrap gap-2">
+            {[
+              {
+                val: region,
+                set: setRegion,
+                opts: ["ALL", "North", "Central", "South"],
+              },
+              { val: subRegion, set: setSubRegion, opts: subregions },
+            ].map((f, i) => (
+              <Select
+                key={i}
+                value={f.val}
+                onValueChange={(v: any) => f.set(v)}
+              >
+                <SelectTrigger className="w-[140px] bg-white/[0.03] border-white/10 text-white h-9 text-xs rounded-lg backdrop-blur-md">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-slate-900 text-white border-slate-800">
-                  {regions.map((x) => (
-                    <SelectItem key={x} value={x}>
-                      {x}
+                <SelectContent className="bg-slate-900 border-white/10 text-slate-300">
+                  {f.opts.map((o: any) => (
+                    <SelectItem key={o} value={o}>
+                      {o === "ALL" ? "All" : o}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[12px] font-bold text-slate-500 uppercase ml-1">
-                Sub-Region
-              </label>
-              <Select value={subRegion} onValueChange={setSubRegion}>
-                <SelectTrigger className="bg-white/10 border-white/5 text-white h-10 backdrop-blur-md">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-slate-900 text-white border-slate-800">
-                  {subRegions.map((x) => (
-                    <SelectItem key={x} value={x}>
-                      {x}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[12px] font-bold text-blue-400 uppercase ml-1">
-                Timeline
-              </label>
-              <Popover open={isPickerOpen} onOpenChange={setIsPickerOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="w-full h-10 bg-[#1e2235]/50 border-white/10 text-white hover:bg-[#1e2235] justify-start font-bold"
-                  >
-                    <CalendarDays className="mr-2 h-4 w-4 text-blue-500" />
-                    <span className="truncate">{dateParams.label}</span>
-                  </Button>
-                </PopoverTrigger>
-
-                <PopoverContent
-                  className="p-0 bg-[#0f172a] border-slate-800 shadow-2xl rounded-xl w-[300px]"
-                  align="end"
+            ))}
+            <Popover open={isPickerOpen} onOpenChange={setIsPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="h-9 bg-blue-500/5 border-blue-500/20 text-blue-100 rounded-lg px-4 text-xs font-bold"
                 >
-                  <Tabs
-                    defaultValue={viewMode}
-                    onValueChange={(v: any) => setViewMode(v)}
-                    className="w-full"
+                  <CalendarDays className="mr-2 h-3.5 w-3.5" />{" "}
+                  {format(selectedMonth, "MMM yyyy")}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                className="p-4 bg-slate-900 border-white/10 w-[260px] rounded-xl"
+                align="end"
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setPickerYear((v) => v - 1)}
                   >
-                    <TabsList className="w-full bg-slate-900/50 h-12 p-1 gap-1 border-b border-slate-800 rounded-none">
-                      <TabsTrigger
-                        value="month"
-                        className="flex-1 text-[13px] font-black uppercase transition-all data-[state=active]:bg-blue-600 data-[state=active]:text-white text-slate-500 hover:text-slate-300"
-                      >
-                        Month View
-                      </TabsTrigger>
-                      <TabsTrigger
-                        value="range"
-                        className="flex-1 text-[13px] font-black uppercase transition-all data-[state=active]:bg-blue-600 data-[state=active]:text-white text-slate-500 hover:text-slate-300"
-                      >
-                        Date Range
-                      </TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value="month" className="p-5 mt-0">
-                      <div className="flex justify-between items-center mb-8 px-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-slate-400 hover:bg-white/5"
-                          onClick={() => setPickerYear((v) => v - 1)}
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </Button>
-                        <span className="text-white font-bold tracking-widest text-[14px]">
-                          {pickerYear}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-slate-400 hover:bg-white/5"
-                          onClick={() => setPickerYear((v) => v + 1)}
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-y-4 gap-x-2">
-                        {MONTH_LABELS.map((m, i) => (
-                          <Button
-                            key={m}
-                            variant="ghost"
-                            className={cn(
-                              "h-10 text-[14px] font-semibold rounded-lg transition-all",
-                              viewMode === "month" &&
-                                selectedMonth.getMonth() === i &&
-                                selectedMonth.getFullYear() === pickerYear
-                                ? "bg-blue-600 text-white shadow-lg shadow-blue-900/20"
-                                : "text-slate-400 hover:bg-white/5"
-                            )}
-                            onClick={() => handleMonthSelect(i)}
-                          >
-                            {m}
-                          </Button>
-                        ))}
-                      </div>
-                    </TabsContent>
-
-                    <TabsContent
-                      value="range"
-                      className="p-0 mt-0 bg-[#0f172a] h-[340px] flex flex-col"
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-white font-black">{pickerYear}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setPickerYear((v) => v + 1)}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  {MONTH_LABELS.map((m, i) => (
+                    <Button
+                      key={m}
+                      variant="ghost"
+                      className={cn(
+                        "h-8 text-[10px] font-bold",
+                        selectedMonth.getMonth() === i &&
+                          selectedMonth.getFullYear() === pickerYear
+                          ? "bg-blue-600 text-white"
+                          : "text-slate-400"
+                      )}
+                      onClick={() => {
+                        setSelectedMonth(new Date(pickerYear, i, 1));
+                        setIsPickerOpen(false);
+                      }}
                     >
-                      <div className="flex-1 px-3 pt-3">
-                        <Calendar
-                          mode="range"
-                          selected={selectedRange}
-                          onSelect={setSelectedRange}
-                          initialFocus
-                          className="p-0 w-full"
-                          classNames={{
-                            caption_label: "text-[14px] font-bold text-white",
-                            nav_button:
-                              "h-7 w-7 bg-transparent p-0 text-slate-400 opacity-50 hover:opacity-100 hover:text-white",
-                            day: "h-9 w-9 p-0 text-[13px] font-normal text-slate-300 rounded-md transition-all hover:bg-blue-600/20 hover:text-white",
-                            day_selected:
-                              "bg-blue-600 text-white hover:bg-blue-500 hover:text-white focus:bg-blue-600 focus:text-white",
-                            day_today: "bg-white/10 text-blue-400 font-black",
-                            day_outside: "text-slate-600 opacity-20",
-                            day_range_middle:
-                              "aria-selected:bg-blue-600/20 aria-selected:text-blue-200",
-                            day_range_start:
-                              "bg-blue-600 text-white rounded-l-md",
-                            day_range_end:
-                              "bg-blue-600 text-white rounded-r-md",
-                          }}
-                        />
-                      </div>
-
-                      <div className="p-4 bg-slate-900/50 border-t border-slate-800 flex justify-end mt-auto">
-                        <Button
-                          size="sm"
-                          className="bg-blue-600 hover:bg-blue-700 text-white font-black px-8 py-5 rounded-xl shadow-lg shadow-blue-900/40 text-[13px]"
-                          onClick={() => {
-                            if (selectedRange?.from) {
-                              setViewMode("range");
-                              setIsPickerOpen(false);
-                            }
-                          }}
-                        >
-                          Apply Range
-                        </Button>
-                      </div>
-                    </TabsContent>
-                  </Tabs>
-                </PopoverContent>
-              </Popover>
-            </div>
+                      {m}
+                    </Button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
 
-        {/* 7 Metric Cards (✅ score is card #2 + first 3 colors all different) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
+        {/* Smaller Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
           {[
             {
-              label: "Distinct Engines",
-              val: summary?.distinct_engines.toLocaleString(),
+              label: "Total DG",
+              val: n((currentRow as any)?.total_dg_count).toLocaleString(),
               icon: Database,
-              bg: "bg-[#162033]", // navy
-              text: "text-white",
+              color: "text-blue-400",
             },
             {
-              label: "Avg Score",
-              val: avgScore.toFixed(1),
-              icon: BarChart3,
-              bg: "bg-[#2b1c3f]", // purple
-              text: "text-white",
+              label: "Score",
+              val: (currentRow as any)?.final_score,
+              icon: Trophy,
+              color: "text-purple-400",
+              isScore: true,
             },
             {
-              label: "Avg Fuel (Ltrs)",
-              val: avgFuel.toFixed(1),
+              label: "Avg Fuel",
+              val: n((currentRow as any)?.avg_fueling_on_fuel_filled).toFixed(
+                2
+              ),
               icon: TrendingUp,
-              bg: "bg-[#12323a]", // teal-dark
-              text: "text-white",
+              color: "text-cyan-400",
             },
             {
-              label: "Target Achieved",
-              val: summary?.target_achieved,
+              label: "Target",
+              val: n((currentRow as any)?.target_achieved).toLocaleString(),
               icon: Target,
-              bg: "bg-emerald-500",
-              text: "text-white",
+              color: "text-emerald-400",
             },
             {
-              label: "Base Achieved",
-              val: summary?.base_achieved,
+              label: "Base",
+              val: n((currentRow as any)?.base_achieved).toLocaleString(),
               icon: Zap,
-              bg: "bg-blue-600",
-              text: "text-white",
+              color: "text-blue-500",
             },
             {
-              label: "Below Base",
-              val: summary?.below_base,
+              label: "Below",
+              val: n((currentRow as any)?.below_base).toLocaleString(),
               icon: BarChart3,
-              bg: "bg-amber-500",
-              text: "text-white",
+              color: "text-amber-400",
             },
             {
-              label: "No Fueling",
-              val: summary?.no_fueling,
+              label: "No Fuel",
+              val: n((currentRow as any)?.no_fueling).toLocaleString(),
               icon: Fuel,
-              bg: "bg-slate-500",
-              text: "text-white",
+              color: "text-slate-500",
+            },
+            {
+              label: "Status",
+              val: (currentRow as any)?.achievement_status,
+              icon: Trophy,
+              color: "text-indigo-400",
+              isStatus: true,
             },
           ].map((card, i) => (
             <Card
               key={i}
-              className={cn(
-                "border-none shadow-xl rounded-2xl overflow-hidden hover:scale-[1.05] transition-all duration-300",
-                card.bg
-              )}
+              className="border border-white/[0.05] bg-white/[0.02] backdrop-blur-md rounded-xl transition-all hover:-translate-y-1 hover:bg-white/[0.05]"
             >
-              <CardContent className="p-6 flex flex-col items-center text-center">
+              <CardContent className="p-3 flex flex-col items-center text-center">
                 <card.icon
-                  className={cn("h-6 w-6 opacity-30 mb-3", card.text)}
+                  className={cn("h-3.5 w-3.5 opacity-40 mb-1.5", card.color)}
                 />
-                <p className="text-[13px] font-black uppercase tracking-widest text-white/90 mb-1">
+                <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mb-0.5">
                   {card.label}
                 </p>
-                <p
-                  className={cn(
-                    "text-3xl font-black tracking-tighter leading-none",
-                    card.text
-                  )}
-                >
-                  {loading ? "..." : card.val}
-                </p>
+                {(card.isScore || card.isStatus) &&
+                region === "ALL" &&
+                subRegion === "ALL" ? (
+                  <div className="w-full space-y-0.5">
+                    {["S", "C", "N"].map((reg) => (
+                      <div
+                        key={reg}
+                        className="flex justify-between text-[9px] border-b border-white/5 last:border-none"
+                      >
+                        <span className="text-slate-600 font-bold">{reg}</span>
+                        <span className="text-white font-black">
+                          {card.isScore
+                            ? rollupMap.get(
+                                reg === "S"
+                                  ? "South"
+                                  : reg === "C"
+                                  ? "Central"
+                                  : "North"
+                              )?.final_score
+                            : "Ach."}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-lg font-black text-white tracking-tighter truncate w-full">
+                    {loading ? "..." : card.val ?? "—"}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
 
-        {/* GRAPHS */}
-        <div className="grid grid-cols-12 gap-6">
-          {/* ✅ Region-level grouped bar (prettier + full legend labels + Base labels show) */}
-          <Card className="col-span-12 lg:col-span-7 border-none shadow-xl rounded-[24px] bg-white overflow-hidden">
-            <CardHeader className="px-8 py-6 border-b">
-              <CardTitle className="text-[13px] font-black text-slate-500 uppercase tracking-widest">
-                Efficiency Breakdown (Region-wise)
+        {/* Dynamic Graphs */}
+        <div className="grid grid-cols-12 gap-4">
+          <Card className="col-span-12 lg:col-span-7 border border-white/5 bg-white/[0.02] rounded-2xl">
+            <CardHeader className="p-4">
+              <CardTitle className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                Efficiency Trends
               </CardTitle>
             </CardHeader>
-
-            <CardContent className="p-8 h-[480px]">
+            <CardContent className="h-[300px] px-2 pb-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={chartRows}
-                  margin={{ top: 26, right: 24, left: 0, bottom: 68 }}
-                  barCategoryGap="30%"
-                  barGap={10}
-                  barSize={34}
-                >
+                <BarChart data={barData} margin={{ top: 20, bottom: 20 }}>
                   <CartesianGrid
-                    strokeDasharray="3 3"
+                    strokeDasharray="0"
                     vertical={false}
-                    stroke="#eef2ff"
+                    stroke="rgba(255,255,255,0.03)"
                   />
                   <XAxis
-                    dataKey="Region"
-                    tick={{ fontSize: 13, fontWeight: 900 }}
+                    dataKey="name"
+                    tick={{ fontSize: 8, fontWeight: 800, fill: "#475569" }}
                     axisLine={false}
                     tickLine={false}
-                    height={52}
+                    interval={0}
+                    angle={-20}
+                    textAnchor="end"
                   />
-                  <YAxis
-                    tick={{ fontSize: 12, fontWeight: 800 }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={44}
-                  />
+                  <YAxis hide />
                   <Tooltip
-                    cursor={{ fill: "#f8fafc" }}
                     contentStyle={{
-                      borderRadius: 12,
-                      border: "1px solid #e2e8f0",
-                      boxShadow: "0 10px 30px rgba(2,6,23,0.08)",
+                      backgroundColor: "#020617",
+                      borderRadius: "8px",
+                      border: "1px solid rgba(255,255,255,0.1)",
                     }}
                   />
-                  <Legend
-                    iconType="circle"
-                    wrapperStyle={{
-                      paddingTop: "18px",
-                      fontSize: "12px",
-                      fontWeight: 900,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.08em",
-                    }}
-                  />
-
                   <Bar
                     dataKey="target_achieved"
-                    name="Target Achieved"
-                    fill={STATUS_COLORS.target}
-                    radius={[10, 10, 10, 10]}
+                    fill="#10b981"
+                    radius={[4, 4, 4, 4]}
                   >
                     <LabelList content={renderGroupedValueLabel} />
                   </Bar>
-
                   <Bar
                     dataKey="base_achieved"
-                    name="Base Achieved"
-                    fill={STATUS_COLORS.base}
-                    radius={[10, 10, 10, 10]}
+                    fill="#3b82f6"
+                    radius={[4, 4, 4, 4]}
                   >
                     <LabelList content={renderGroupedValueLabel} />
                   </Bar>
-
                   <Bar
                     dataKey="below_base"
-                    name="Below Base"
-                    fill={STATUS_COLORS.below}
-                    radius={[10, 10, 10, 10]}
-                  >
-                    <LabelList content={renderGroupedValueLabel} />
-                  </Bar>
-
-                  <Bar
-                    dataKey="no_fueling"
-                    name="No Fueling"
-                    fill={STATUS_COLORS.none}
-                    radius={[10, 10, 10, 10]}
+                    fill="#f59e0b"
+                    radius={[4, 4, 4, 4]}
                   >
                     <LabelList content={renderGroupedValueLabel} />
                   </Bar>
@@ -812,178 +541,155 @@ export default function DgKpiPage() {
             </CardContent>
           </Card>
 
-          {/* PIE */}
-          <Card className="col-span-12 lg:col-span-5 border-none shadow-xl rounded-[24px] bg-white overflow-hidden">
-            <CardHeader className="px-8 py-6 border-b flex flex-row items-center justify-between">
-              <CardTitle className="text-[13px] font-black text-slate-500 uppercase tracking-widest">
-                Status Distribution
+          <Card className="col-span-12 lg:col-span-5 border border-white/5 bg-white/[0.02] rounded-2xl">
+            <CardHeader className="p-4">
+              <CardTitle className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                Distribution
               </CardTitle>
             </CardHeader>
-
-            <CardContent className="p-4 h-[480px] flex items-center justify-center relative">
+            <CardContent className="h-[300px] p-2">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart
-                  margin={{ left: 110, right: 110, top: 30, bottom: 30 }}
-                >
+                <PieChart>
                   <Pie
                     data={pieData}
                     dataKey="value"
-                    nameKey="name"
                     cx="50%"
                     cy="50%"
-                    innerRadius="48%"
-                    outerRadius="62%"
-                    paddingAngle={6}
+                    innerRadius="40%"
+                    outerRadius="60%"
+                    paddingAngle={8}
                     stroke="none"
                     label={renderPieLabel}
                   >
                     {pieData.map((e, i) => (
                       <Cell key={i} fill={e.color} />
                     ))}
-                    <Label
-                      position="center"
-                      content={({ viewBox }) => {
-                        const { cx, cy } = (viewBox || {}) as any;
-                        if (typeof cx !== "number" || typeof cy !== "number")
-                          return null;
-                        return (
-                          <g>
-                            <text
-                              x={cx}
-                              y={cy - 5}
-                              textAnchor="middle"
-                              dominantBaseline="central"
-                              className="fill-slate-900 text-3xl font-black"
-                            >
-                              {loading ? "..." : totalSites.toLocaleString()}
-                            </text>
-                            <text
-                              x={cx}
-                              y={cy + 22}
-                              textAnchor="middle"
-                              dominantBaseline="central"
-                              className="fill-slate-400 text-[12px] font-bold uppercase tracking-[0.2em]"
-                            >
-                              Total Sites
-                            </text>
-                          </g>
-                        );
-                      }}
-                    />
                   </Pie>
                   <Tooltip />
-                  <Legend
-                    verticalAlign="bottom"
-                    height={40}
-                    iconType="rect"
-                    wrapperStyle={{
-                      fontSize: "12px",
-                      fontWeight: 900,
-                      paddingTop: "20px",
-                    }}
-                  />
                 </PieChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
         </div>
 
-        {/* ONE TABLE */}
-        <Card className="border-none shadow-xl rounded-[24px] bg-white overflow-hidden">
-          <CardHeader className="px-8 py-6 bg-slate-50 border-b flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <CardTitle className="text-lg font-black text-slate-800 uppercase tracking-widest">
-              Sub-Region — Performance Summary
-            </CardTitle>
-
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  value={tableSearch}
-                  onChange={(e) => setTableSearch(e.target.value)}
-                  placeholder="Search Sub-Region..."
-                  className="h-9 pl-9 w-[240px] text-sm"
-                />
-              </div>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadTableCSV}
-                className="flex items-center gap-2 border-blue-200 text-blue-600 hover:bg-blue-50 font-bold px-4 transition-all"
-              >
-                <Download className="w-4 h-4" />
-                Download CSV
-              </Button>
-            </div>
-          </CardHeader>
-
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead className="text-[12px] font-bold bg-slate-100/30 text-slate-500 uppercase">
-                <tr>
-                  <th className="px-8 py-5">Sub-Region</th>
-                  <th className="px-4 py-5 text-center">Target Achieved</th>
-                  <th className="px-4 py-5 text-center">Base Achieved</th>
-                  <th className="px-4 py-5 text-center">Below Base</th>
-                  <th className="px-4 py-5 text-center">No Fueling</th>
-                  <th className="px-4 py-5 text-center">Avg Score</th>
-                  <th className="px-4 py-5 text-center text-blue-600">
-                    Achieved (%)
-                  </th>
-                  <th className="px-8 py-5 text-right">Total Sites</th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-50">
-                {filteredTableRows.map((r: any, i) => {
-                  const total =
-                    Number(r.total_count ?? 0) ||
-                    Number(r.target_achieved ?? 0) +
-                      Number(r.base_achieved ?? 0) +
-                      Number(r.below_base ?? 0) +
-                      Number(r.no_fueling ?? 0);
-
-                  return (
-                    <tr key={i} className="hover:bg-blue-50/20 transition-all">
-                      <td className="px-8 py-4 text-[15px] font-bold text-slate-700">
-                        {r.SubRegion}
+        {/* Compact Tables */}
+        <div className="flex flex-col xl:flex-row gap-4">
+          <Card className="flex-[5.5] h-[550px] border border-white/5 bg-white/[0.02] rounded-2xl overflow-hidden flex flex-col shadow-2xl">
+            <CardHeader className="p-4 border-b border-white/[0.03] flex flex-row items-center justify-between">
+              <CardTitle className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Sub-Region Summary
+              </CardTitle>
+              <Input
+                value={tableSearch}
+                onChange={(e) => setTableSearch(e.target.value)}
+                placeholder="Search..."
+                className="h-7 w-[150px] text-[10px] bg-white/5 border-none rounded-lg"
+              />
+            </CardHeader>
+            <CardContent className="p-0 overflow-y-auto flex-1 custom-scrollbar">
+              <table className="w-full text-left border-collapse">
+                <thead className="text-[9px] font-black bg-white/[0.02] text-slate-500 uppercase sticky top-0 z-10">
+                  <tr className="border-b border-white/5">
+                    <th className="px-4 py-3">Sub-Region</th>
+                    <th className="px-2 py-3 text-center">DG</th>
+                    <th className="px-2 py-3 text-center">Fuel (L)</th>
+                    <th className="px-2 py-3 text-center text-blue-500">
+                      Ach %
+                    </th>
+                    <th className="px-4 py-3 text-right">Score</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.02]">
+                  {tableRows.map((r, i) => (
+                    <tr
+                      key={i}
+                      onClick={() => setSelectedTableSubregion(r.subregion)}
+                      className={cn(
+                        "group cursor-pointer transition-colors",
+                        selectedTableSubregion === r.subregion
+                          ? "bg-blue-600/10"
+                          : "hover:bg-white/[0.02]"
+                      )}
+                    >
+                      <td className="px-4 py-3 text-[11px] font-bold text-slate-400">
+                        {r.subregion}
                       </td>
-
-                      <td className="px-4 py-4 text-center text-[14px] font-black text-emerald-700">
-                        {r.target_achieved}
+                      <td className="px-2 py-3 text-center text-[11px] font-black text-slate-200">
+                        {n(r.total_dg_count)}
                       </td>
-
-                      <td className="px-4 py-4 text-center text-[14px] font-black text-blue-700">
-                        {r.base_achieved}
+                      <td className="px-2 py-3 text-center text-[11px] font-black text-slate-200">
+                        {n(r.total_fueling).toLocaleString()}
                       </td>
-
-                      <td className="px-4 py-4 text-center text-[14px] font-black text-amber-700">
-                        {r.below_base}
+                      <td className="px-2 py-3 text-center text-[11px] font-black text-blue-400">
+                        {n(r.target_achieved_pct).toFixed(2)}%
                       </td>
-
-                      <td className="px-4 py-4 text-center text-[14px] font-black text-slate-600">
-                        {r.no_fueling}
-                      </td>
-
-                      <td className="px-4 py-4 text-center text-[14px] font-black text-slate-900">
-                        {Number(r.avg_score ?? 0).toFixed(1)}
-                      </td>
-
-                      <td className="px-4 py-4 text-center text-[14px] font-black text-slate-900">
-                        {pct(r.target_achieved, total)}
-                      </td>
-
-                      <td className="px-8 py-4 text-right text-[14px] font-bold text-slate-400">
-                        {total}
+                      <td className="px-4 py-3 text-right text-[11px] font-black text-white">
+                        {r.final_score?.toFixed(2)}
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+
+          <Card className="flex-[4.5] h-[550px] border border-white/5 bg-white/[0.02] rounded-2xl overflow-hidden flex flex-col shadow-2xl">
+            <CardHeader className="p-4 border-b border-white/[0.03] flex flex-row items-center justify-between">
+              <CardTitle className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Site Wise
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedTableSubregion(null)}
+                className="text-[9px] text-slate-500 uppercase"
+              >
+                Reset
+              </Button>
+            </CardHeader>
+            <CardContent className="p-0 overflow-y-auto flex-1 custom-scrollbar">
+              <table className="w-full text-left border-collapse">
+                <thead className="text-[9px] font-black bg-white/[0.02] text-slate-500 uppercase sticky top-0 z-10">
+                  <tr className="border-b border-white/5">
+                    <th className="px-4 py-3">Engine No</th>
+                    <th className="px-2 py-3 text-center">Score</th>
+                    <th className="px-2 py-3 text-center">Fuel (L)</th>
+                    <th className="px-4 py-3 text-center">Target</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.02]">
+                  {enginesLoading ? (
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="text-center py-10 text-[9px] font-black uppercase text-slate-600"
+                      >
+                        Loading...
+                      </td>
+                    </tr>
+                  ) : (
+                    engines.map((e, i) => (
+                      <tr key={i} className="hover:bg-white/[0.01]">
+                        <td className="px-4 py-3 text-[11px] font-bold text-slate-400 truncate max-w-[120px]">
+                          {e.dg_engine_no}
+                        </td>
+                        <td className="px-2 py-3 text-center text-[11px] font-black text-cyan-400">
+                          {e.dg_kpi_score?.toFixed(2)}
+                        </td>
+                        <td className="px-2 py-3 text-center text-[11px] font-bold text-slate-500">
+                          {e.total_fuel_consumed}
+                        </td>
+                        <td className="px-4 py-3 text-center text-[11px] font-bold text-slate-500">
+                          {e.regional_target_fuel}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

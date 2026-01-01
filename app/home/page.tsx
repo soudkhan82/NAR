@@ -184,14 +184,6 @@ export default function HomeLanding() {
           ))}
         </div>
       </section>
-
-      {/* Footer */}
-      <footer className="border-t border-white/10">
-        <div className="mx-auto max-w-7xl px-6 py-8 text-sm text-slate-400">
-          © {new Date().getFullYear()} GeoIntel360 · Built with Next.js +
-          Supabase
-        </div>
-      </footer>
     </main>
   );
 }

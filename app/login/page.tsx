@@ -78,10 +78,6 @@ export default function LoginPage() {
             {busy ? "Signing in..." : "Sign in"}
           </button>
         </form>
-
-        <div className="mt-5 text-xs text-slate-400">
-          © {new Date().getFullYear()} GeoIntel360
-        </div>
       </div>
     </main>
   );

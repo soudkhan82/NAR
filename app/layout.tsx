@@ -20,7 +20,7 @@ export default function RootLayout({
         <AuthShell>
           {/* MainNav will be smart and hide itself on /login */}
           <MainNav />
-          <div className="pt-4">{children}</div>
+          <div className="">{children}</div>
         </AuthShell>
 
         <SonnerProvider />
