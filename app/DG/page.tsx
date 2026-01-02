@@ -399,138 +399,183 @@ export default function DgKpiPage() {
           </div>
         </div>
 
-        {/* ✅ EXTRA compact cards (still 4+4) — only card box smaller */}
+        {/* Cards (4 x 2) */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             {
+              key: "total_dg",
               label: "Total DG",
-              val: n((currentRow as any)?.total_dg_count).toLocaleString(),
               icon: Database,
-              ring: "ring-blue-500/30",
-              glow: "group-hover:shadow-[0_0_0_1px_rgba(59,130,246,0.22),0_8px_18px_rgba(59,130,246,0.10)]",
-              iconText: "text-blue-300",
-            },
-            {
-              label: "Score",
-              val: (currentRow as any)?.final_score,
-              icon: Trophy,
-              ring: "ring-violet-500/30",
-              glow: "group-hover:shadow-[0_0_0_1px_rgba(139,92,246,0.22),0_8px_18px_rgba(139,92,246,0.10)]",
-              iconText: "text-violet-300",
-              isScore: true,
-            },
-            {
-              label: "Avg Fuel",
-              val: n((currentRow as any)?.avg_fueling_on_fuel_filled).toFixed(
-                1
+              color: "text-blue-400",
+              render: () => (
+                <p className="text-3xl font-black text-white tracking-tighter">
+                  {n((currentRow as any)?.total_dg_count).toLocaleString()}
+                </p>
               ),
-              icon: TrendingUp,
-              ring: "ring-cyan-500/30",
-              glow: "group-hover:shadow-[0_0_0_1px_rgba(34,211,238,0.20),0_8px_18px_rgba(34,211,238,0.10)]",
-              iconText: "text-cyan-300",
-              suffix: "Liters",
             },
-            {
-              label: "Target",
-              val: n((currentRow as any)?.target_achieved).toLocaleString(),
-              icon: Target,
-              ring: "ring-emerald-500/30",
-              glow: "group-hover:shadow-[0_0_0_1px_rgba(16,185,129,0.20),0_8px_18px_rgba(16,185,129,0.10)]",
-              iconText: "text-emerald-300",
-            },
-            {
-              label: "Base",
-              val: n((currentRow as any)?.base_achieved).toLocaleString(),
-              icon: Zap,
-              ring: "ring-sky-500/30",
-              glow: "group-hover:shadow-[0_0_0_1px_rgba(56,189,248,0.20),0_8px_18px_rgba(56,189,248,0.10)]",
-              iconText: "text-sky-300",
-            },
-            {
-              label: "Below",
-              val: n((currentRow as any)?.below_base).toLocaleString(),
-              icon: BarChart3,
-              ring: "ring-amber-500/30",
-              glow: "group-hover:shadow-[0_0_0_1px_rgba(245,158,11,0.20),0_8px_18px_rgba(245,158,11,0.10)]",
-              iconText: "text-amber-300",
-            },
-            {
-              label: "No Fuel",
-              val: n((currentRow as any)?.no_fueling).toLocaleString(),
-              icon: Fuel,
-              ring: "ring-slate-500/25",
-              glow: "group-hover:shadow-[0_0_0_1px_rgba(148,163,184,0.16),0_8px_18px_rgba(15,23,42,0.20)]",
-              iconText: "text-slate-200",
-            },
-            {
-              label: "Status",
-              val: (currentRow as any)?.achievement_status,
-              icon: Trophy,
-              ring: "ring-indigo-500/30",
-              glow: "group-hover:shadow-[0_0_0_1px_rgba(99,102,241,0.20),0_8px_18px_rgba(99,102,241,0.10)]",
-              iconText: "text-indigo-300",
-              isStatus: true,
-            },
-          ].map((card, i) => (
-            <Card
-              key={i}
-              className={cn(
-                "group border border-white/5 bg-slate-900/40 backdrop-blur-md rounded-2xl",
-                "transition-all hover:bg-slate-800/55 hover:scale-[1.01]",
-                card.glow
-              )}
-            >
-              {/* ✅ smaller card body (ONLY box reduced) */}
-              <CardContent className="p-3 min-h-[88px] flex flex-col items-center justify-center">
-                {/* icon badge unchanged in feel */}
-                <div
-                  className={cn(
-                    "h-8 w-8 rounded-lg flex items-center justify-center mb-2",
-                    "bg-white/[0.03] ring-1",
-                    card.ring
-                  )}
-                >
-                  <card.icon
-                    className={cn("h-5 w-5 opacity-90", card.iconText)}
-                  />
-                </div>
 
-                <p className="text-[13px] font-bold uppercase tracking-[0.15em] text-slate-500 mb-1">
+            {
+              key: "score_combo",
+              label: "Score / Status",
+              icon: Trophy,
+              color: "text-purple-400",
+              render: () => {
+                // when ALL + ALL => show 3 regions (score + status together)
+                if (region === "ALL" && subRegion === "ALL") {
+                  const rows = ["South", "Central", "North"].map((reg) => {
+                    const r = rollupMap.get(reg);
+                    const score = r?.final_score ?? "—";
+                    const status = r?.achievement_status ?? "—";
+                    return { reg, score, status };
+                  });
+
+                  return (
+                    <div className="w-full grid grid-cols-3 gap-2 pt-1">
+                      {rows.map((x) => (
+                        <div
+                          key={x.reg}
+                          className="rounded-xl border border-white/10 bg-white/[0.02] px-2 py-2 text-center"
+                        >
+                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                            {x.reg}
+                          </div>
+                          <div className="text-[13px] font-black text-white mt-1">
+                            {x.score}
+                          </div>
+                          <div className="text-[10px] font-bold text-slate-400 mt-1 truncate">
+                            {x.status}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
+
+                // otherwise (region/subregion selected): show single score + status
+                const score =
+                  (currentRow as any)?.final_score !== null &&
+                  (currentRow as any)?.final_score !== undefined
+                    ? String((currentRow as any)?.final_score)
+                    : "—";
+
+                const status = (currentRow as any)?.achievement_status
+                  ? String((currentRow as any)?.achievement_status)
+                  : "—";
+
+                return (
+                  <div className="text-center">
+                    <div className="text-3xl font-black text-white tracking-tighter">
+                      {score}
+                    </div>
+                    <div className="text-[11px] font-bold text-slate-400 mt-1 truncate">
+                      {status}
+                    </div>
+                  </div>
+                );
+              },
+            },
+
+            {
+              key: "avg_fuel",
+              label: "Avg Fuel",
+              icon: TrendingUp,
+              color: "text-cyan-400",
+              render: () => (
+                <div className="text-center">
+                  <div className="text-3xl font-black text-white tracking-tighter">
+                    {n((currentRow as any)?.avg_fueling_on_fuel_filled).toFixed(
+                      1
+                    )}
+                    <span className="text-[12px] font-bold text-slate-500 ml-2">
+                      Liters
+                    </span>
+                  </div>
+                </div>
+              ),
+            },
+
+            {
+              key: "total_fueling",
+              label: "Total Fueling",
+              icon: Fuel,
+              color: "text-emerald-300",
+              render: () => (
+                <div className="text-center">
+                  <div className="text-3xl font-black text-white tracking-tighter">
+                    {n((currentRow as any)?.total_fueling).toLocaleString(
+                      undefined,
+                      {
+                        maximumFractionDigits: 0,
+                      }
+                    )}
+                    <span className="text-[12px] font-bold text-slate-500 ml-2">
+                      Liters
+                    </span>
+                  </div>
+                </div>
+              ),
+            },
+
+            {
+              key: "target",
+              label: "Target Achieved",
+              icon: Target,
+              color: "text-emerald-400",
+              render: () => (
+                <p className="text-3xl font-black text-white tracking-tighter">
+                  {n((currentRow as any)?.target_achieved).toLocaleString()}
+                </p>
+              ),
+            },
+
+            {
+              key: "base",
+              label: "Base",
+              icon: Zap,
+              color: "text-blue-500",
+              render: () => (
+                <p className="text-3xl font-black text-white tracking-tighter">
+                  {n((currentRow as any)?.base_achieved).toLocaleString()}
+                </p>
+              ),
+            },
+
+            {
+              key: "below",
+              label: "Below",
+              icon: BarChart3,
+              color: "text-amber-400",
+              render: () => (
+                <p className="text-3xl font-black text-white tracking-tighter">
+                  {n((currentRow as any)?.below_base).toLocaleString()}
+                </p>
+              ),
+            },
+
+            {
+              key: "no_fuel",
+              label: "No Fuel",
+              icon: Database, // keep icon style same; change if you want
+              color: "text-slate-400",
+              render: () => (
+                <p className="text-3xl font-black text-white tracking-tighter">
+                  {n((currentRow as any)?.no_fueling).toLocaleString()}
+                </p>
+              ),
+            },
+          ].map((card) => (
+            <Card
+              key={card.key}
+              className="border border-white/[0.05] bg-white/[0.02] backdrop-blur-md rounded-2xl transition-all hover:-translate-y-1 hover:bg-white/[0.05]"
+            >
+              <CardContent className="p-4 flex flex-col items-center text-center">
+                <card.icon
+                  className={cn("h-4 w-4 opacity-50 mb-2", card.color)}
+                />
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
                   {card.label}
                 </p>
-
-                {(card.isScore || card.isStatus) &&
-                region === "ALL" &&
-                subRegion === "ALL" ? (
-                  <div className="w-full grid grid-cols-3 gap-1 border-t border-white/5 pt-2 mt-2">
-                    {["South", "Central", "North"].map((r) => {
-                      const rr = rollupMap.get(r);
-                      return (
-                        <div key={r} className="text-center">
-                          <p className="text-[10px] text-slate-600 font-black uppercase">
-                            {r}
-                          </p>
-                          <p className="text-[12px] text-white font-black leading-tight">
-                            {card.isScore
-                              ? rr?.final_score ?? "—"
-                              : rr?.achievement_status ?? "—"}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="flex items-end gap-2">
-                    <p className="text-[24px] font-black text-white tracking-tighter">
-                      {loading ? "..." : card.val ?? "—"}
-                    </p>
-                    {card.suffix ? (
-                      <span className="text-[11px] font-black text-slate-500 mb-[2px]">
-                        {card.suffix}
-                      </span>
-                    ) : null}
-                  </div>
-                )}
+                {card.render()}
               </CardContent>
             </Card>
           ))}
@@ -803,9 +848,7 @@ export default function DgKpiPage() {
                     <th className="px-2 py-2 text-right whitespace-nowrap">
                       Total Fueling (Ltr.)
                     </th>
-                    <th className="px-2 py-2 text-right whitespace-nowrap">
-                      Avg Fueling (Filled)
-                    </th>
+
                     <th className="px-2 py-2 text-right whitespace-nowrap">
                       Target Achieved (%)
                     </th>
@@ -814,6 +857,9 @@ export default function DgKpiPage() {
                     </th>
                     <th className="px-2 py-2 text-right whitespace-nowrap">
                       Base
+                    </th>
+                    <th className="px-2 py-2 text-right whitespace-nowrap">
+                      Avg Fueling (Filled)
                     </th>
                     <th className="px-2 py-2 text-right whitespace-nowrap">
                       Final Score
@@ -847,9 +893,6 @@ export default function DgKpiPage() {
                         {fmt0(r.total_fueling)}
                       </td>
                       <td className="px-2 py-2 text-right text-slate-200 text-[12px]">
-                        {fmt2(r.avg_fueling_on_fuel_filled)}
-                      </td>
-                      <td className="px-2 py-2 text-right text-slate-200 text-[12px]">
                         {fmt2(r.target_achieved_pct)}
                       </td>
                       <td className="px-2 py-2 text-right text-slate-200 text-[12px]">
@@ -857,6 +900,9 @@ export default function DgKpiPage() {
                       </td>
                       <td className="px-2 py-2 text-right text-slate-200 text-[12px]">
                         {fmt0(r.base)}
+                      </td>
+                      <td className="px-2 py-2 text-right text-slate-200 text-[12px]">
+                        {fmt2(r.avg_fueling_on_fuel_filled)}
                       </td>
                       <td className="px-2 py-2 text-right font-black text-white text-[12px]">
                         {fmt2(r.final_score)}
