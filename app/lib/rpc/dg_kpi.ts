@@ -1,3 +1,4 @@
+// app/lib/rpc/dg_kpi.ts
 import supabase from "@/app/config/supabase-config";
 
 /** ---------- Types ---------- */
@@ -71,6 +72,7 @@ export async function fetchRegionNwdRollup(params: {
     p_date: params.date,
   });
   if (error) throw error;
+
   return (data ?? []).map((r: any) => ({
     region: String(r.region ?? ""),
     date: String(r.date ?? params.date),
@@ -98,6 +100,7 @@ export async function fetchDgSubregions(params: {
     p_region: params.region,
   });
   if (error) throw error;
+
   return (data ?? []).map((r: any) => ({
     subregion: String(r.subregion ?? ""),
   }));
@@ -114,6 +117,7 @@ export async function fetchDgSubregionRows(params: {
     p_subregion: params.subregion,
   });
   if (error) throw error;
+
   return (data ?? []).map((r: any) => ({
     subregion: String(r.subregion ?? ""),
     date: String(r.date ?? params.date),
@@ -134,49 +138,78 @@ export async function fetchDgSubregionRows(params: {
 }
 
 /** ---------- Site table (DG_KPI) ---------- */
+/**
+ * FIX: Supabase/PostgREST commonly returns 1000 rows by default.
+ * We fetch ALL rows via pagination (range 0-999, 1000-1999, ...).
+ */
 export async function fetchDgKpiSites(params: {
-  date: string;
+  date: string; // yyyy-mm-dd (end of month)
   region?: string | null;
   subregion?: string | null;
 }): Promise<SiteKpiRow[]> {
-  let query = supabase
-    .from("DG_KPI")
-    .select(
-      `
-      DG_EngineNo,
-      SubRegion,
-      Region,
-      Total_Fuel_Consumed,
-      Regional_Target_Fuel,
-      Regional_Base_Fuel,
-      Average_DG_Fuel_Target,
-      DG_Month,
-      DG_KPI_Score
-    `
-    )
-    .eq("DG_Month", params.date);
+  const pageSize = 1000;
+  let from = 0;
 
-  if (params.subregion) {
-    query = query.eq("SubRegion", params.subregion);
-  } else if (params.region && params.region !== "ALL") {
-    query = query.eq("Region", params.region);
+  const out: SiteKpiRow[] = [];
+
+  // Build base query builder factory (so we can re-run with range)
+  const build = () => {
+    let q = supabase
+      .from("DG_KPI")
+      .select(
+        `
+          DG_EngineNo,
+          SubRegion,
+          Region,
+          Total_Fuel_Consumed,
+          Regional_Target_Fuel,
+          Regional_Base_Fuel,
+          Average_DG_Fuel_Target,
+          DG_Month,
+          DG_KPI_Score
+        `
+      )
+      .eq("DG_Month", params.date);
+
+    if (params.subregion) {
+      q = q.eq("SubRegion", params.subregion);
+    } else if (params.region && params.region !== "ALL") {
+      q = q.eq("Region", params.region);
+    }
+
+    // Important: stable ordering so pagination is consistent
+    q = q.order("DG_KPI_Score", { ascending: true, nullsFirst: false })
+         .order("DG_EngineNo", { ascending: true, nullsFirst: false });
+
+    return q;
+  };
+
+  while (true) {
+    const to = from + pageSize - 1;
+
+    const { data, error } = await build().range(from, to);
+
+    if (error) throw error;
+
+    const rows = (data ?? []).map((r: any) => ({
+      dg_engine_no: str(r.DG_EngineNo),
+      subregion: str(r.SubRegion),
+      region: str(r.Region),
+      total_fuel_consumed: num(r.Total_Fuel_Consumed),
+      regional_target_fuel: num(r.Regional_Target_Fuel),
+      regional_base_fuel: num(r.Regional_Base_Fuel),
+      average_dg_fuel_target: str(r.Average_DG_Fuel_Target),
+      dg_month: str(r.DG_Month),
+      dg_kpi_score: num(r.DG_KPI_Score),
+    })) as SiteKpiRow[];
+
+    out.push(...rows);
+
+    // If fewer than pageSize returned → end
+    if (!data || data.length < pageSize) break;
+
+    from += pageSize;
   }
 
-  const { data, error } = await query.order("DG_KPI_Score", {
-    ascending: true,
-    nullsFirst: false,
-  });
-
-  if (error) throw error;
-  return (data ?? []).map((r: any) => ({
-    dg_engine_no: str(r.DG_EngineNo),
-    subregion: str(r.SubRegion),
-    region: str(r.Region),
-    total_fuel_consumed: num(r.Total_Fuel_Consumed),
-    regional_target_fuel: num(r.Regional_Target_Fuel),
-    regional_base_fuel: num(r.Regional_Base_Fuel),
-    average_dg_fuel_target: str(r.Average_DG_Fuel_Target),
-    dg_month: str(r.DG_Month),
-    dg_kpi_score: num(r.DG_KPI_Score),
-  }));
+  return out;
 }
