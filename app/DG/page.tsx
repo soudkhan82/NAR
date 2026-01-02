@@ -758,11 +758,28 @@ export default function DgKpiPage() {
                       String(name),
                     ]}
                     contentStyle={{
-                      backgroundColor: "#020617",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: "10px",
-                      color: "white",
+                      background: "rgba(2, 6, 23, 0.92)", // slightly lighter + transparent
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      borderRadius: "12px",
+                      boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
+                      backdropFilter: "blur(10px)",
+                      WebkitBackdropFilter: "blur(10px)",
+                      padding: "10px 12px",
                     }}
+                    labelStyle={{
+                      color: "#E2E8F0", // slate-200
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.08em",
+                      fontSize: 11,
+                      marginBottom: 6,
+                    }}
+                    itemStyle={{
+                      color: "#F8FAFC", // slate-50 for readable values
+                      fontWeight: 800,
+                      fontSize: 12,
+                    }}
+                    cursor={{ fill: "rgba(255,255,255,0.06)" }}
                   />
                 </PieChart>
               </ResponsiveContainer>
