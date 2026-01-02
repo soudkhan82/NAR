@@ -295,7 +295,7 @@ export default function DgKpiPage() {
               DG KPI <span className="text-blue-400">ANALYTICS</span>
             </h1>
             <p className="text-[12px] text-slate-400 mt-1">
-              Snapshot Date:{" "}
+              Snapshot Date:
               <span className="text-slate-200 font-semibold">
                 {snapshotDate}
               </span>
@@ -398,8 +398,7 @@ export default function DgKpiPage() {
             </Popover>
           </div>
         </div>
-
-        {/* Cards (4 x 2) */}
+        {/* Cards*/}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             {
@@ -484,7 +483,7 @@ export default function DgKpiPage() {
                 <div className="text-center">
                   <div className="text-3xl font-black text-white tracking-tighter">
                     {n((currentRow as any)?.avg_fueling_on_fuel_filled).toFixed(
-                      1
+                      2
                     )}
                     <span className="text-[12px] font-bold text-slate-500 ml-2">
                       Liters
@@ -580,7 +579,6 @@ export default function DgKpiPage() {
             </Card>
           ))}
         </div>
-
         {/* Graphs */}
         <div className="grid grid-cols-12 gap-6">
           {/* Bar Chart */}
@@ -771,7 +769,7 @@ export default function DgKpiPage() {
             </CardContent>
           </Card>
         </div>
-
+        {/* Tables */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
           {/* Subregion Summary (60%) */}
           <Card className="xl:col-span-7 border border-white/10 bg-slate-900/35 rounded-2xl flex flex-col h-[640px] overflow-hidden">
@@ -846,7 +844,7 @@ export default function DgKpiPage() {
                       Filled DG
                     </th>
                     <th className="px-2 py-2 text-right whitespace-nowrap">
-                      Total Fueling (Ltr.)
+                      Total Fueling (Liters)
                     </th>
 
                     <th className="px-2 py-2 text-right whitespace-nowrap">
@@ -879,7 +877,6 @@ export default function DgKpiPage() {
                           "bg-blue-500/10"
                       )}
                     >
-                      {" "}
                       <td className="px-3 py-2 text-slate-100 whitespace-nowrap text-[12px] font-extrabold">
                         {r.subregion}
                       </td>
