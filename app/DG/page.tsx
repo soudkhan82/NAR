@@ -807,6 +807,9 @@ export default function DgKpiPage() {
                       Avg Fueling (Filled)
                     </th>
                     <th className="px-2 py-2 text-right whitespace-nowrap">
+                      Target Achieved (%)
+                    </th>
+                    <th className="px-2 py-2 text-right whitespace-nowrap">
                       Target
                     </th>
                     <th className="px-2 py-2 text-right whitespace-nowrap">
@@ -845,6 +848,9 @@ export default function DgKpiPage() {
                       </td>
                       <td className="px-2 py-2 text-right text-slate-200 text-[12px]">
                         {fmt2(r.avg_fueling_on_fuel_filled)}
+                      </td>
+                      <td className="px-2 py-2 text-right text-slate-200 text-[12px]">
+                        {fmt2(r.target_achieved_pct)}
                       </td>
                       <td className="px-2 py-2 text-right text-slate-200 text-[12px]">
                         {fmt0(r.target)}
