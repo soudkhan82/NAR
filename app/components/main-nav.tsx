@@ -42,6 +42,11 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/Rms", label: "RMS", gradient: "from-red-400 to-rose-500" },
   { href: "/DG", label: "DG KPI", gradient: "from-violet-400 to-fuchsia-500" },
   {
+    href: "/Availability_KPI",
+    label: "Availability KPI",
+    gradient: "from-violet-400 to-fuchsia-500",
+  },
+  {
     href: "/cpunits",
     label: "CP Units",
     gradient: "from-blue-500 to-indigo-600",
