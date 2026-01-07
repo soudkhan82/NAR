@@ -33,7 +33,11 @@ function num(n: number | null | undefined) {
   return Number.isFinite(v) ? v.toLocaleString() : "0";
 }
 
-function detailsHref(subregion: string | null, indicator: string, label: string) {
+function detailsHref(
+  subregion: string | null,
+  indicator: string,
+  label: string
+) {
   const sr = encodeURIComponent(subregion ?? "");
   const ind = encodeURIComponent(indicator);
   const lab = encodeURIComponent(label);
@@ -75,7 +79,11 @@ function IndicatorCell(props: {
 
   if (disabled) {
     return (
-      <span className={`${commonClass} text-slate-200/80`} style={style} title={props.label}>
+      <span
+        className={`${commonClass} text-slate-200/80`}
+        style={style}
+        title={props.label}
+      >
         {num(v)}
       </span>
     );
@@ -96,7 +104,9 @@ function IndicatorCell(props: {
 export default async function RmsPage({
   searchParams,
 }: {
-  searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>;
+  searchParams?:
+    | Promise<Record<string, string | string[] | undefined>>
+    | Record<string, string | string[] | undefined>;
 }) {
   // Works in both Next 14 (object) and Next 15 (Promise)
   const sp = await Promise.resolve(searchParams ?? {});
@@ -106,7 +116,13 @@ export default async function RmsPage({
 
   // Drill-down
   if (subregion && indicator) {
-    return <RmsDetailsView subregion={subregion} indicator={indicator} label={label} />;
+    return (
+      <RmsDetailsView
+        subregion={subregion}
+        indicator={indicator}
+        label={label}
+      />
+    );
   }
 
   const { data, error } = await supabase.rpc("fetch_rms_subregion_summary");
@@ -125,14 +141,23 @@ export default async function RmsPage({
   const rows = (data ?? []) as RmsSummaryRow[];
 
   const max = {
-    rms_disconnected: Math.max(...rows.map((r) => Number(r.rms_disconnected_count ?? 0)), 0),
+    rms_disconnected: Math.max(
+      ...rows.map((r) => Number(r.rms_disconnected_count ?? 0)),
+      0
+    ),
     ip_yes: Math.max(...rows.map((r) => Number(r.ip_connectivity_yes ?? 0)), 0),
     ip_no: Math.max(...rows.map((r) => Number(r.ip_connectivity_no ?? 0)), 0),
     phase_1: Math.max(...rows.map((r) => Number(r.phase_1_missing ?? 0)), 0),
     phase_2: Math.max(...rows.map((r) => Number(r.phase_2_missing ?? 0)), 0),
     batt: Math.max(...rows.map((r) => Number(r.battery_health_lt70 ?? 0)), 0),
-    smr_short: Math.max(...rows.map((r) => Number(r.smr_shortfall_count ?? 0)), 0),
-    crit: Math.max(...rows.map((r) => Number(r.critical_shortfall_count ?? 0)), 0),
+    smr_short: Math.max(
+      ...rows.map((r) => Number(r.smr_shortfall_count ?? 0)),
+      0
+    ),
+    crit: Math.max(
+      ...rows.map((r) => Number(r.critical_shortfall_count ?? 0)),
+      0
+    ),
     extra: Math.max(...rows.map((r) => Number(r.extra_smr_count ?? 0)), 0),
     ac_norm: Math.max(...rows.map((r) => Number(r.ac_spd_normal ?? 0)), 0),
     ac_abn: Math.max(...rows.map((r) => Number(r.ac_spd_abnormal ?? 0)), 0),
@@ -144,14 +169,30 @@ export default async function RmsPage({
         <div className="relative z-50 rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
-              <h1 className="text-2xl font-semibold text-white">RMS Sub-Regional Summary</h1>
+              <h1 className="text-2xl font-semibold text-white">
+                RMS Sub-Regional Summary
+              </h1>
               <p className="text-sm text-slate-300">
                 Tap any indicator value to drill-down into SiteName list.
               </p>
             </div>
 
-            {/* Client search box */}
-            <RmsHeaderSearch />
+            {/* Right side: button + search */}
+            <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
+              {/* ✅ New button */}
+              <Link
+                href="/Rms/region"
+                className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/90 transition hover:bg-white/10 hover:border-white/15 hover:shadow-[0_0_0_1px_rgba(34,211,238,0.18),0_18px_45px_rgba(0,0,0,0.55)]"
+                title="Open Interactive Region Report"
+              >
+                Interactive Region Report
+              </Link>
+
+              {/* Client search box */}
+              <div className="min-w-[320px] md:min-w-[420px]">
+                <RmsHeaderSearch />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -169,7 +210,9 @@ export default async function RmsPage({
                   <th className="px-3 py-3 text-right">IP No</th>
                   <th className="px-3 py-3 text-right">1 Phase Missing</th>
                   <th className="px-3 py-3 text-right">2 Phase Missing</th>
-                  <th className="px-3 py-3 text-right">Battery &lt;70% (Yes)</th>
+                  <th className="px-3 py-3 text-right">
+                    Battery &lt;70% (Yes)
+                  </th>
                   <th className="px-3 py-3 text-right">Shortfall</th>
                   <th className="px-3 py-3 text-right">Critical (&lt;95%)</th>
                   <th className="px-3 py-3 text-right">Extra</th>
@@ -187,10 +230,16 @@ export default async function RmsPage({
                     } hover:bg-white/10 transition`}
                   >
                     <td className="px-3 py-2">{r.region ?? "-"}</td>
-                    <td className="px-3 py-2 font-medium">{r.subregion ?? "-"}</td>
+                    <td className="px-3 py-2 font-medium">
+                      {r.subregion ?? "-"}
+                    </td>
 
-                    <td className="px-3 py-2 text-right">{num(r.overall_sites_count)}</td>
-                    <td className="px-3 py-2 text-right">{num(r.rms_sites_count)}</td>
+                    <td className="px-3 py-2 text-right">
+                      {num(r.overall_sites_count)}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {num(r.rms_sites_count)}
+                    </td>
 
                     <td className="px-3 py-2 text-right">
                       <IndicatorCell
@@ -306,7 +355,10 @@ export default async function RmsPage({
 
                 {rows.length === 0 && (
                   <tr>
-                    <td className="px-3 py-6 text-center text-slate-300" colSpan={15}>
+                    <td
+                      className="px-3 py-6 text-center text-slate-300"
+                      colSpan={15}
+                    >
                       No data found.
                     </td>
                   </tr>

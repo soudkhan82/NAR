@@ -186,6 +186,63 @@ function chipDot(hex: string) {
     />
   );
 }
+function DonutLabel(props: any) {
+  const { cx, cy, midAngle, outerRadius, percent, name, value } = props;
+
+  const RADIAN = Math.PI / 180;
+
+  // where the label sits
+  const r = outerRadius + 16;
+  const x = cx + r * Math.cos(-midAngle * RADIAN);
+  const y = cy + r * Math.sin(-midAngle * RADIAN);
+
+  // where the line starts (near arc)
+  const x2 = cx + (outerRadius + 6) * Math.cos(-midAngle * RADIAN);
+  const y2 = cy + (outerRadius + 6) * Math.sin(-midAngle * RADIAN);
+
+  const pctText = `${Math.round((percent ?? 0) * 100)}%`;
+  const anchor = x > cx ? "start" : "end";
+
+  return (
+    <g>
+      {/* leader line */}
+      <line
+        x1={x2}
+        y1={y2}
+        x2={x}
+        y2={y}
+        stroke="rgba(255,255,255,0.35)"
+        strokeWidth={1}
+      />
+
+      {/* Region + % */}
+      <text
+        x={x + (anchor === "start" ? 6 : -6)}
+        y={y}
+        textAnchor={anchor}
+        dominantBaseline="central"
+        fill="rgba(255,255,255,0.92)"
+        fontSize={12}
+        fontWeight={800}
+      >
+        {String(name)} {pctText}
+      </text>
+
+      {/* value (optional) */}
+      <text
+        x={x + (anchor === "start" ? 6 : -6)}
+        y={y + 14}
+        textAnchor={anchor}
+        dominantBaseline="central"
+        fill="rgba(255,255,255,0.55)"
+        fontSize={11}
+        fontWeight={700}
+      >
+        {Number(value ?? 0).toLocaleString()}
+      </text>
+    </g>
+  );
+}
 
 /* =========================
    Clickable indicator cell (SubRegion only)
@@ -484,35 +541,72 @@ export default function RmsRegionDashboardPage() {
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-stretch gap-2">
-            {/* KPI */}
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 min-w-[260px]">
-              <div className="text-[11px] text-white/60">KPI</div>
-              <select
-                value={kpiKey}
-                onChange={(e) => setKpiKey(e.target.value as KpiKey)}
-                className="mt-1 w-full bg-transparent outline-none text-sm text-white"
-              >
-                {KPI_OPTIONS.map((k) => (
-                  <option key={k.key} value={k.key} className="text-slate-900">
-                    {k.label}
-                  </option>
-                ))}
-              </select>
+          {/* Filters row wrapper (IMPORTANT) */}
+          <div className="relative z-0">
+            <div className="relative z-[70] overflow-visible rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-5">
+              <div className="mt-4 flex flex-wrap items-stretch gap-2">
+                {/* KPI */}
+                <div className="min-w-[260px]">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur px-4 py-2">
+                    <div className="text-[11px] text-white/60">KPI</div>
+
+                    <div className="mt-1 relative">
+                      <select
+                        value={kpiKey}
+                        onChange={(e) => setKpiKey(e.target.value as KpiKey)}
+                        className="w-full appearance-none bg-transparent pr-9 outline-none text-sm text-white"
+                      >
+                        {KPI_OPTIONS.map((k) => (
+                          <option
+                            key={k.key}
+                            value={k.key}
+                            className="bg-slate-950 text-white"
+                          >
+                            {k.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      <svg
+                        className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 text-white/60"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ✅ Search - force above everything */}
+                <div className="flex-1 min-w-[320px] relative z-[90] overflow-visible">
+                  <RmsHeaderSearch />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setKpiKey("rms_disconnected_count");
+                    setExpandedRegion(null);
+                  }}
+                  className="shrink-0 rounded-2xl border border-white/10 bg-white/5 backdrop-blur px-4 py-3 text-sm font-semibold text-white/90 hover:bg-white/10 transition"
+                >
+                  Reset
+                </button>
+              </div>
             </div>
 
-            {/* Search */}
-            <div className="flex-1 min-w-[320px]">
-              <RmsHeaderSearch />
-            </div>
+            {loading && (
+              <div className="mt-3 text-sm text-white/60">Loading…</div>
+            )}
+            {!loading && err && (
+              <div className="mt-3 text-sm text-rose-200">Error: {err}</div>
+            )}
           </div>
-
-          {loading && (
-            <div className="mt-3 text-sm text-white/60">Loading…</div>
-          )}
-          {!loading && err && (
-            <div className="mt-3 text-sm text-rose-200">Error: {err}</div>
-          )}
         </div>
 
         {/* ===== Region cards (REQUIRED) ===== */}
@@ -649,8 +743,6 @@ export default function RmsRegionDashboardPage() {
 
                   <Bar dataKey="value" radius={[12, 12, 0, 0]}>
                     {barData.map((d: any) => {
-                      // In region mode, each region bar has its own color
-                      // In subregion mode, all bars follow the selected region color
                       const fill =
                         barMode === "region"
                           ? regionHex(String(d.name))
@@ -659,7 +751,9 @@ export default function RmsRegionDashboardPage() {
                     })}
                     <LabelList
                       dataKey="value"
-                      {...valueLabelProps}
+                      position="top"
+                      fill="rgba(255,255,255,0.92)"
+                      fontSize={11}
                       formatter={(v: any) => Number(v ?? 0).toLocaleString()}
                     />
                   </Bar>
@@ -673,6 +767,7 @@ export default function RmsRegionDashboardPage() {
             </div>
           </div>
 
+          {/* Donut (40%) */}
           {/* Donut (40%) */}
           <div className="col-span-12 lg:col-span-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4">
             <div className="flex items-end justify-between gap-3 mb-3">
@@ -708,28 +803,51 @@ export default function RmsRegionDashboardPage() {
                       />
                     )}
                   />
+
                   <Pie
                     data={donutData}
                     dataKey="value"
                     nameKey="name"
                     cx="50%"
                     cy="50%"
-                    innerRadius="58%"
-                    outerRadius="82%"
+                    innerRadius="60%"
+                    outerRadius="84%"
                     paddingAngle={4}
                     stroke="rgba(255,255,255,0.08)"
+                    labelLine={false}
+                    label={DonutLabel}
                   >
                     {donutData.map((d) => (
                       <Cell key={d.name} fill={d.hex} />
                     ))}
-                    <LabelList
-                      dataKey="name"
-                      position="outside"
-                      fill="rgba(255,255,255,0.80)"
-                      fontSize={11}
-                      formatter={(name: any) => String(name)}
-                    />
                   </Pie>
+
+                  {/* Center text: total */}
+                  <text
+                    x="50%"
+                    y="50%"
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="rgba(255,255,255,0.92)"
+                    fontSize={18}
+                    fontWeight={900}
+                  >
+                    {donutData
+                      .reduce((s, d) => s + Number(d.value ?? 0), 0)
+                      .toLocaleString()}
+                  </text>
+                  <text
+                    x="50%"
+                    y="50%"
+                    dy={22}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="rgba(255,255,255,0.55)"
+                    fontSize={12}
+                    fontWeight={700}
+                  >
+                    total
+                  </text>
                 </PieChart>
               </ResponsiveContainer>
             </div>
