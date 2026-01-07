@@ -212,7 +212,7 @@ function DonutLabel(props: any) {
         x2={x}
         y2={y}
         stroke="rgba(255,255,255,0.35)"
-        strokeWidth={1}
+        strokeWidth={2}
       />
 
       {/* Region + % */}

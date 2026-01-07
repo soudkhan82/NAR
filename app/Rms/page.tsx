@@ -182,6 +182,7 @@ export default async function RmsPage({
               {/* ✅ New button */}
               <Link
                 href="/Rms/region"
+                target="_blank"
                 className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/90 transition hover:bg-white/10 hover:border-white/15 hover:shadow-[0_0_0_1px_rgba(34,211,238,0.18),0_18px_45px_rgba(0,0,0,0.55)]"
                 title="Open Interactive Region Report"
               >

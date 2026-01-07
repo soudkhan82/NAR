@@ -368,7 +368,6 @@ function AvailabilityKpiInner() {
 
         if (cancelled) return;
 
-        // pagination append
         if (siteOffset === 0) setSiteRows(rows);
         else setSiteRows((prev) => [...prev, ...rows]);
       } catch (e) {
@@ -628,50 +627,75 @@ function AvailabilityKpiInner() {
             </div>
           </div>
 
-          {/* CARDS */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <KpiCard
-              title="Total Sites"
-              value={n0(cards.total)}
-              icon={BarChart3}
-              tone="teal"
-            />
-            <KpiCard
-              title="Avg Score"
-              value={cards.score == null ? "—" : `${n2(cards.score)}`}
-              icon={Gauge}
-              tone="violet"
-            />
-            <KpiCard
-              title="Ach %"
-              value={cards.ach == null ? "—" : `${n2(cards.ach)}%`}
-              icon={Percent}
-              tone="indigo"
-            />
-            <KpiCard
-              title="Target Achieved"
-              value={n0(cards.t)}
-              icon={CheckCircle2}
-              tone="teal"
-            />
-            <KpiCard
-              title="Base Achieved"
-              value={n0(cards.b)}
-              icon={MinusCircle}
-              tone="blue"
-            />
-            <KpiCard
-              title="Below Base"
-              value={n0(cards.below)}
-              icon={AlertTriangle}
-              tone="rose"
-            />
+          {/* ✅ 50/50: CARDS (2 rows) + GRAPH (aligned) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+            {/* LEFT half: cards -> 3 columns, 2 rows */}
+            <div className="lg:col-span-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 h-full">
+                <KpiCard
+                  title="Total Sites"
+                  value={n0(cards.total)}
+                  icon={BarChart3}
+                  tone="teal"
+                />
+                <KpiCard
+                  title="Avg Score"
+                  value={cards.score == null ? "—" : `${n2(cards.score)}`}
+                  icon={Gauge}
+                  tone="violet"
+                />
+                <KpiCard
+                  title="Ach %"
+                  value={cards.ach == null ? "—" : `${n2(cards.ach)}%`}
+                  icon={Percent}
+                  tone="indigo"
+                />
+                <KpiCard
+                  title="Target Achieved"
+                  value={n0(cards.t)}
+                  icon={CheckCircle2}
+                  tone="teal"
+                />
+                <KpiCard
+                  title="Base Achieved"
+                  value={n0(cards.b)}
+                  icon={MinusCircle}
+                  tone="blue"
+                />
+                <KpiCard
+                  title="Below Base"
+                  value={n0(cards.below)}
+                  icon={AlertTriangle}
+                  tone="rose"
+                />
+              </div>
+            </div>
+
+            {/* RIGHT half: graph -> same block height as the two-row cards */}
+            <div className="lg:col-span-6">
+              <ChartCard
+                className="h-full"
+                chartHeightClass="h-[260px]"
+                title={`${tableGroup} Comparison`}
+                subtitle={
+                  region === "ALL"
+                    ? "North / Central / South"
+                    : subRegion
+                    ? `SubRegion: ${subRegion}`
+                    : `SubRegions in ${region}`
+                }
+                data={graphRows}
+                loading={loadingData}
+              />
+            </div>
           </div>
 
-          {/* TABLE + GRAPH + SITE TABLE */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* LEFT: SubRegion Table */}
-            <Card className="lg:col-span-7 border-slate-800 bg-slate-900/20 backdrop-blur rounded-3xl overflow-hidden">
+          {/* ✅ Under that: TWO TABLES side-by-side, SAME HEIGHT.
+    ✅ SubRegion table: NO SCROLL (shows all rows)
+    ✅ Site table: SCROLL (many rows) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+            {/* LEFT: SubRegion Table (NO scroll) */}
+            <Card className="lg:col-span-6 border-slate-800 bg-slate-900/20 backdrop-blur rounded-3xl overflow-hidden flex flex-col">
               <div className="p-4 flex flex-col gap-3 border-b border-slate-800">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -734,16 +758,16 @@ function AvailabilityKpiInner() {
                 </div>
               </div>
 
-              <div className="max-h-[700px] overflow-auto">
+              {/* ✅ NO scroll here */}
+              <div className="overflow-visible">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-slate-950/80 border-b border-slate-800 backdrop-blur">
+                  <thead className="bg-slate-950/60 border-b border-slate-800">
                     <tr className="text-left text-[11px] uppercase tracking-widest text-slate-500">
                       <th className="p-3">SubRegion</th>
                       <th className="p-3">Total</th>
                       <th className="p-3">Target</th>
                       <th className="p-3">Base</th>
                       <th className="p-3">Below</th>
-                      {/* ✅ removed BLANK column */}
                       <th className="p-3 text-right">Ach%</th>
                       <th className="p-3 text-right">Score</th>
                     </tr>
@@ -785,7 +809,6 @@ function AvailabilityKpiInner() {
                                 });
                                 setSiteOffset(0);
                               }
-
                               setSiteOffset(0);
                             }}
                             className={[
@@ -811,7 +834,6 @@ function AvailabilityKpiInner() {
                             <td className="p-3 text-rose-200 tabular-nums">
                               {n0(r.target_and_base_not_achieved)}
                             </td>
-
                             <td className="p-3 text-right tabular-nums">
                               {r.achievement == null
                                 ? "—"
@@ -829,153 +851,138 @@ function AvailabilityKpiInner() {
               </div>
             </Card>
 
-            {/* RIGHT: Chart + Site table (fills blank space) */}
-            <div className="lg:col-span-5 space-y-4">
-              <ChartCard
-                title={`${tableGroup} Comparison`}
-                subtitle={
-                  region === "ALL"
-                    ? "North / Central / South"
-                    : subRegion
-                    ? `SubRegion: ${subRegion}`
-                    : `SubRegions in ${region}`
-                }
-                data={graphRows}
-                loading={loadingData}
-              />
-
-              {/* ✅ Site-level table */}
-              <Card className="rounded-3xl bg-slate-900/20 backdrop-blur border border-slate-800 overflow-hidden">
-                <div className="p-4 border-b border-slate-800 flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <div className="h-9 w-9 rounded-2xl bg-slate-950/40 border border-slate-800 flex items-center justify-center text-slate-300">
-                        <Database className="h-4 w-4" />
+            {/* RIGHT: Site-level table (SCROLL) */}
+            <Card className="lg:col-span-6 rounded-3xl bg-slate-900/20 backdrop-blur border border-slate-800 overflow-hidden flex flex-col">
+              <div className="p-4 border-b border-slate-800 flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-9 w-9 rounded-2xl bg-slate-950/40 border border-slate-800 flex items-center justify-center text-slate-300">
+                      <Database className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-black tracking-wide">
+                        Site Details
                       </div>
-                      <div>
-                        <div className="text-sm font-black tracking-wide">
-                          Site Details
-                        </div>
-                        <div className="text-[11px] text-slate-500 font-semibold">
-                          {siteTitle}
-                        </div>
+                      <div className="text-[11px] text-slate-500 font-semibold">
+                        {siteTitle}
                       </div>
                     </div>
-
-                    {selectedRow ? (
-                      <div className="mt-2 text-[11px] text-slate-400">
-                        Selected:{" "}
-                        <span className="text-slate-200 font-semibold">
-                          {selectedRow.region} · {selectedRow.sub_region}
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="mt-2 text-[11px] text-slate-500">
-                        Tip: Click a SubRegion row to drill down to site level.
-                      </div>
-                    )}
                   </div>
 
-                  <Badge
-                    variant="secondary"
-                    className="bg-slate-950/60 border border-slate-800"
-                  >
-                    {siteLoading ? "Loading…" : `${siteRows.length} rows`}
-                  </Badge>
+                  {selectedRow ? (
+                    <div className="mt-2 text-[11px] text-slate-400">
+                      Selected:{" "}
+                      <span className="text-slate-200 font-semibold">
+                        {selectedRow.region} · {selectedRow.sub_region}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className=" text-[11px] text-slate-500">
+                      Tip: Click a SubRegion row to drill down to site level.
+                    </div>
+                  )}
                 </div>
 
-                <div className="p-3 border-b border-slate-800 flex items-center gap-2">
-                  <Input
-                    value={siteSearch}
-                    onChange={(e) => {
-                      setSiteSearch(e.target.value);
-                      setSiteOffset(0);
-                    }}
-                    placeholder="Search SiteName…"
-                    className="bg-slate-950/40 border-slate-800"
-                  />
-                </div>
+                <Badge
+                  variant="secondary"
+                  className="bg-slate-950/60 border border-slate-800"
+                >
+                  {siteLoading ? "Loading…" : `${siteRows.length} rows`}
+                </Badge>
+              </div>
 
-                <div className="max-h-[300px] overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-slate-950/80 border-b border-slate-800 backdrop-blur">
-                      <tr className="text-left text-[11px] uppercase tracking-widest text-slate-500">
-                        <th className="p-3">Site</th>
-                        <th className="p-3">Category</th>
-                        <th className="p-3">Status</th>
-                        <th className="p-3 text-right">Ach%</th>
-                        <th className="p-3 text-right">Score</th>
+              <div className="p-2 border-b border-slate-800 flex items-center gap-2">
+                <Input
+                  value={siteSearch}
+                  onChange={(e) => {
+                    setSiteSearch(e.target.value);
+                    setSiteOffset(0);
+                  }}
+                  placeholder="Search SiteName…"
+                  className="bg-slate-950/40 border-slate-800"
+                />
+              </div>
+
+              {/* ✅ keep scroll only here */}
+              <div className="h-[520px] overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-950/80 border-b border-slate-800 backdrop-blur">
+                    <tr className="text-left text-[11px] uppercase tracking-widest text-slate-500">
+                      <th className="p-3">Site</th>
+                      <th className="p-3">Category</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3 text-right">Ach%</th>
+                      <th className="p-3 text-right">Score</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {siteLoading && siteOffset === 0 ? (
+                      <tr>
+                        <td className="p-6 text-slate-300" colSpan={5}>
+                          <Loader2 className="inline h-4 w-4 mr-2 animate-spin" />
+                          Loading site rows…
+                        </td>
                       </tr>
-                    </thead>
-
-                    <tbody>
-                      {siteLoading && siteOffset === 0 ? (
-                        <tr>
-                          <td className="p-6 text-slate-300" colSpan={5}>
-                            <Loader2 className="inline h-4 w-4 mr-2 animate-spin" />
-                            Loading site rows…
-                          </td>
-                        </tr>
-                      ) : siteRows.length === 0 ? (
-                        <tr>
-                          <td className="p-6 text-slate-400" colSpan={5}>
-                            No sites found.
-                          </td>
-                        </tr>
-                      ) : (
-                        siteRows.map((s, i) => (
-                          <tr
-                            key={`${s.sitename ?? "x"}-${i}`}
-                            className="border-b border-slate-800/60"
-                          >
-                            <td className="p-3 font-semibold text-slate-200 tabular-nums">
-                              {s.sitename ?? "—"}
-                            </td>
-                            <td className="p-3 text-slate-300">
-                              {s.category ?? "—"}
-                            </td>
-                            <td className="p-3 text-slate-300">
-                              {s.target_status ?? "—"}
-                            </td>
-                            <td className="p-3 text-right tabular-nums text-slate-200">
-                              {s.achievement == null
-                                ? "—"
-                                : `${n2(s.achievement)}%`}
-                            </td>
-                            <td className="p-3 text-right tabular-nums text-slate-200">
-                              {s.score == null ? "—" : `${n2(s.score)}`}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="p-3 border-t border-slate-800 flex items-center justify-between">
-                  <div className="text-[11px] text-slate-500">
-                    Showing {siteRows.length} (limit {siteLimit})
-                  </div>
-
-                  <Button
-                    variant="secondary"
-                    className="bg-slate-950/40 border border-slate-800 hover:bg-slate-900"
-                    onClick={() => setSiteOffset((x) => x + siteLimit)}
-                    disabled={siteLoading}
-                    title="Load more rows"
-                  >
-                    {siteLoading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Loading
-                      </>
+                    ) : siteRows.length === 0 ? (
+                      <tr>
+                        <td className="p-6 text-slate-400" colSpan={5}>
+                          No sites found.
+                        </td>
+                      </tr>
                     ) : (
-                      "Load More"
+                      siteRows.map((s, i) => (
+                        <tr
+                          key={`${s.sitename ?? "x"}-${i}`}
+                          className="border-b border-slate-800/60"
+                        >
+                          <td className="p-3 font-semibold text-slate-200 tabular-nums">
+                            {s.sitename ?? "—"}
+                          </td>
+                          <td className="p-3 text-slate-300">
+                            {s.category ?? "—"}
+                          </td>
+                          <td className="p-3 text-slate-300">
+                            {s.target_status ?? "—"}
+                          </td>
+                          <td className="p-3 text-right tabular-nums text-slate-200">
+                            {s.achievement == null
+                              ? "—"
+                              : `${n2(s.achievement)}%`}
+                          </td>
+                          <td className="p-3 text-right tabular-nums text-slate-200">
+                            {s.score == null ? "—" : `${n2(s.score)}`}
+                          </td>
+                        </tr>
+                      ))
                     )}
-                  </Button>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="p-3 border-t border-slate-800 flex items-center justify-between">
+                <div className="text-[11px] text-slate-500">
+                  Showing {siteRows.length} (limit {siteLimit})
                 </div>
-              </Card>
-            </div>
+
+                <Button
+                  variant="secondary"
+                  className="bg-slate-950/40 border border-slate-800 hover:bg-slate-900"
+                  onClick={() => setSiteOffset((x) => x + siteLimit)}
+                  disabled={siteLoading}
+                  title="Load more rows"
+                >
+                  {siteLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Loading
+                    </>
+                  ) : (
+                    "Load More"
+                  )}
+                </Button>
+              </div>
+            </Card>
           </div>
         </div>
       </div>
@@ -1056,14 +1063,23 @@ function ChartCard({
   subtitle,
   data,
   loading,
+  className,
+  chartHeightClass = "h-[320px]",
 }: {
   title: string;
   subtitle: string;
   data: Array<{ label: string; score: number; achievement: number }>;
   loading: boolean;
+  className?: string;
+  chartHeightClass?: string;
 }) {
   return (
-    <Card className="rounded-3xl bg-slate-900/20 backdrop-blur border border-slate-800 overflow-hidden">
+    <Card
+      className={[
+        "rounded-3xl bg-slate-900/20 backdrop-blur border border-slate-800 overflow-hidden",
+        className ?? "",
+      ].join(" ")}
+    >
       <div className="p-4 border-b border-slate-800 flex items-center justify-between">
         <div>
           <div className="text-sm font-black tracking-wide">{title}</div>
@@ -1081,16 +1097,20 @@ function ChartCard({
 
       <div className="p-4">
         {loading ? (
-          <div className="h-[320px] flex items-center justify-center text-slate-300">
+          <div
+            className={`${chartHeightClass} flex items-center justify-center text-slate-300`}
+          >
             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             Loading…
           </div>
         ) : data.length === 0 ? (
-          <div className="h-[320px] flex items-center justify-center text-slate-400">
+          <div
+            className={`${chartHeightClass} flex items-center justify-center text-slate-400`}
+          >
             No data
           </div>
         ) : (
-          <div className="h-[320px]">
+          <div className={chartHeightClass}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
